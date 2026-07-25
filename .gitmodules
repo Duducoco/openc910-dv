@@ -1,0 +1,3 @@
+[submodule "riscv-dv"]
+	path = riscv-dv
+	url = git@github.com:Duducoco/riscv-dv-openc910.git
