@@ -83,6 +83,36 @@ Run every test in `riscv-dv/target/c910/testlist.yaml` with the default seed:
 $ make dv-regress DV_TESTS=all
 ```
 
+Run the same RV64IMC stimulus configuration at five instruction depths to
+compare how coverage grows from a tiny baseline to an extended run:
+
+```sh
+$ make dv-regress \
+    DV_TESTS="c910_coverage_ladder_tiny_test \
+              c910_coverage_ladder_short_test \
+              c910_coverage_ladder_medium_test \
+              c910_coverage_ladder_long_test \
+              c910_coverage_ladder_extended_test" \
+    SEEDS=1
+```
+
+The ladder uses `instr_cnt` values `20`, `100`, `1000`, `5000`, and `15000`.
+Additional execution-domain ladders use the depth points retained after an
+OpenC910 VCS coverage saturation run:
+
+```text
+Integer:    200, 500, 1000, 2000, 5000, 10000
+Branch:     200, 1000, 10000
+Load/store: 200, 1000, 5000, 10000
+```
+
+Their test names follow `c910_<domain>_depth_<count>_test`, where `<domain>` is
+`integer`, `branch`, or `load_store`.
+
+Floating-point behavior remains covered by the feature-oriented tests. Its
+depth ladder is not enabled because the 200-instruction VCS pilot did not
+complete on the current OpenC910 RTL flow.
+
 The flow can also be run in separate stages when debugging generation or
 linking. `dv-buildcase` expects the source produced by `dv-generate` for the
 same test and seed.
