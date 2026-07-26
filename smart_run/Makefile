@@ -41,6 +41,16 @@ DV_RUN_DIR = $(WORK_ROOT)/runs/$(DV_CASE)
 DV_GEN_DIR = $(DV_RUN_DIR)/.dv-gen
 DV_SOURCE = $(DV_RUN_DIR)/$(DV_TEST)_seed_$(SEED).S
 DV_TOHOST_HEX ?= 01ffffe0
+DV_TESTS ?= all
+RUNS_PER_TEST ?= 50
+JOBS ?= 50
+REPORT_JOBS ?= 8
+SEED_BASE ?= 1
+DV_TIMEOUT ?= 1800
+ESTIMATED_CASE_MIB ?= 500
+DRY_RUN ?= off
+FORCE ?= off
+REGRESS_ROOT ?= $(WORK_ROOT)/regress
 BUILD_KEY = $(if $(filter $(CASE),debug_gpr debug_memory plic_int sleep),$(CASE),default)
 BUILD_DIR = $(WORK_ROOT)/build/$(BUILD_KEY)
 RUN_DIR = $(WORK_ROOT)/runs/$(if $(strip $(CASE)),$(CASE),compile)
@@ -341,7 +351,24 @@ dv-compile:
 	  echo "  [riscv-dv] Reusing $(DV_BUILD_DIR)/vcs_simv"; \
 	fi
 
-dv-generate: check-dv-args dv-compile
+DV_GENERATE_DEPS = check-dv-args dv-compile
+ifeq ($(DV_PREBUILT),on)
+DV_GENERATE_DEPS = check-dv-args check-dv-prebuilt
+endif
+
+check-dv-prebuilt:
+	@test -x "$(WORK_ROOT)/build/default/simv" || { echo "Missing prebuilt RTL simulator" >&2; exit 2; }
+	@test -d "$(WORK_ROOT)/build/default/$(COV_DIR)" || { echo "Missing prebuilt coverage database" >&2; exit 2; }
+	@test -x "$(DV_BUILD_DIR)/vcs_simv" || { echo "Missing prebuilt riscv-dv generator" >&2; exit 2; }
+	@grep -q 'SIM=vcs COV=on' "$(WORK_ROOT)/build/default/.build-config" || { \
+	  echo "RTL simulator was not compiled with VCS coverage" >&2; exit 2; }
+
+dv-preflight: check-dv-args
+	@$(MAKE) -s compile CASE="$(DV_CASE)" SIM=vcs COV=on
+	@$(MAKE) -s dv-compile
+	@$(MAKE) -s check-dv-prebuilt
+
+dv-generate: $(DV_GENERATE_DEPS)
 	@rm -rf "$(DV_RUN_DIR)"
 	@mkdir -p "$(DV_GEN_DIR)"
 	@ln -s "$(abspath $(DV_BUILD_DIR))/vcs_simv" "$(DV_GEN_DIR)/vcs_simv"
@@ -375,8 +402,7 @@ dv-buildcase: check-dv-args tool-chain-chk
 	@cd "$(DV_RUN_DIR)" && "$(abspath ./tests/bin/Srec2vmem)" inst.hex inst.pat
 	@cd "$(DV_RUN_DIR)" && "$(abspath ./tests/bin/Srec2vmem)" data.hex data.pat
 
-dv-runcase: check-dv-args
-	@$(MAKE) -s compile CASE="$(DV_CASE)" SIM=vcs COV=on
+dv-simcase: check-dv-args check-dv-prebuilt
 	@$(MAKE) -s dv-generate DV_TEST="$(DV_TEST)" SEED="$(SEED)"
 	@$(MAKE) -s dv-buildcase DV_TEST="$(DV_TEST)" SEED="$(SEED)"
 	@rm -rf "$(DV_RUN_DIR)/$(COV_DIR)"
@@ -394,12 +420,23 @@ dv-runcase: check-dv-args
 	    "OPENC910_COMMIT=$$(git rev-parse HEAD)" \
 	    "RISCV_DV_COMMIT=$$(git -C "$(DV_ROOT)" rev-parse HEAD)" \
 	    > "$(DV_RUN_DIR)/run.meta"
-	@$(MAKE) -s coverage CASE="$(DV_CASE)" SIM=vcs COV=on
 	@rm -rf "$(DV_GEN_DIR)" "$(DV_RUN_DIR)/dv_test.elf" \
 	  "$(DV_RUN_DIR)/inst.hex" "$(DV_RUN_DIR)/data.hex" \
 	  "$(DV_RUN_DIR)/inst.pat" "$(DV_RUN_DIR)/data.pat" \
 	  "$(DV_RUN_DIR)/dv_tohost.addr" "$(DV_RUN_DIR)/cm.log" \
 	  "$(DV_RUN_DIR)/ucli.key"
+
+dv-reportcase: check-dv-args
+	@test "$$(cat "$(DV_RUN_DIR)/run_case.report" 2>/dev/null)" = "TEST PASS" || { \
+	  echo "Cannot report failed case: $(DV_CASE)" >&2; exit 1; }
+	@test -d "$(DV_RUN_DIR)/$(COV_DIR)" || { echo "Missing coverage database: $(DV_CASE)" >&2; exit 2; }
+	@rm -rf "$(DV_RUN_DIR)/$(COV_REPORT_DIR)"
+	@$(MAKE) -s coverage CASE="$(DV_CASE)" SIM=vcs COV=on
+
+dv-runcase: check-dv-args
+	@$(MAKE) -s dv-preflight DV_TEST="$(DV_TEST)" SEED="$(SEED)"
+	@$(MAKE) -s dv-simcase DV_TEST="$(DV_TEST)" SEED="$(SEED)" DV_PREBUILT=on
+	@$(MAKE) -s dv-reportcase DV_TEST="$(DV_TEST)" SEED="$(SEED)"
 
 dv-regress:
 	@tests="$(DV_TESTS)"; \
@@ -410,6 +447,22 @@ dv-regress:
 	    $(MAKE) -s dv-runcase DV_TEST="$$test" SEED="$$seed" || exit $$?; \
 	  done; \
 	done
+
+dv-regress-parallel:
+	@python3 ./dv/parallel_regress.py \
+	  --testlist "$(DV_TESTLIST)" \
+	  --tests "$(DV_TESTS)" \
+	  --runs-per-test "$(RUNS_PER_TEST)" \
+	  --jobs "$(JOBS)" \
+	  --report-jobs "$(REPORT_JOBS)" \
+	  --seed-base "$(SEED_BASE)" \
+	  --timeout "$(DV_TIMEOUT)" \
+	  --estimated-case-mib "$(ESTIMATED_CASE_MIB)" \
+	  --work-root "$(abspath $(WORK_ROOT))" \
+	  --regress-root "$(abspath $(REGRESS_ROOT))" \
+	  --make-command "$(MAKE)" \
+	  $(if $(filter on,$(DRY_RUN)),--dry-run,) \
+	  $(if $(filter on,$(FORCE)),--force,)
 
 ################################################################################
 # Misc
@@ -437,7 +490,7 @@ else
 endif
 
 clean:
-	@rm -rf "$(WORK_ROOT)/build" "$(WORK_ROOT)/runs"
+	@rm -rf "$(WORK_ROOT)/build" "$(WORK_ROOT)/runs" "$(WORK_ROOT)/regress"
 
 help:
 	@echo "  ########## Smart Help Info ##########"
@@ -452,6 +505,7 @@ help:
 	@echo "    dv-show                         : list OpenC910 riscv-dv tests"
 	@echo "    dv-runcase DV_TEST=[test] SEED=[seed] : generate, simulate, and report coverage"
 	@echo "    dv-regress DV_TESTS=[tests] SEEDS=[seeds] : run generated coverage cases"
+	@echo "    dv-regress-parallel              : run resumable parallel DV coverage regression"
 	@echo "    coverage                        : generate the VCS coverage report"
 	@echo "    memlist                         : generate the SRAM list with VCS/Verdi"
 	@echo "    cleansim / cleancase / clean    : remove generated files"
@@ -462,14 +516,22 @@ help:
 	@echo "    COV=                            : on / off (VCS only)"
 	@echo "    REBUILD=                        : on / off (force simulator rebuild)"
 	@echo "    THREADS=                        : Verilator thread count"
+	@echo "    RUNS_PER_TEST=                  : parallel runs per DV test (default: 50)"
+	@echo "    JOBS= / REPORT_JOBS=            : simulation/report concurrency (defaults: 50/8)"
+	@echo "    SEED_BASE= / DV_TIMEOUT=         : first seed and per-stage timeout in seconds"
+	@echo "    DRY_RUN=on                      : write and display the parallel plan only"
+	@echo "    FORCE=on                        : rerun complete test+seed cases"
 	@echo "  Examples:"
 	@echo "    make runcase CASE=hello_world SIM=vcs"
 	@echo "    make runcase CASE=hello_world SIM=vcs COV=on"
 	@echo "    make coverage CASE=hello_world SIM=vcs COV=on"
 	@echo "    make dv-runcase DV_TEST=c910_integer_arithmetic_test SEED=1"
+	@echo "    make dv-regress-parallel DV_TESTS=all RUNS_PER_TEST=50 JOBS=50"
 	@echo "    make runcase CASE=coremark SIM=verilator THREADS=8"
 
 .PHONY: prepare-work compile buildVerilator cleansim cleanVerilator showcase \
 	buildcase cleancase prunecase runVerilator runcase regress memlist coverage \
-	dv-show check-dv-args dv-compile dv-generate dv-buildcase dv-runcase dv-regress \
+	dv-show check-dv-args check-dv-prebuilt dv-preflight dv-compile dv-generate \
+	dv-buildcase dv-simcase dv-reportcase dv-runcase dv-regress \
+	dv-regress-parallel \
 	clean help

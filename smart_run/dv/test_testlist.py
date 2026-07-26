@@ -3,6 +3,7 @@
 import pathlib
 import re
 import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -209,6 +210,109 @@ class C910TestlistTest(unittest.TestCase):
             text=True,
         )
         self.assertIn("dv-runcase DV_TEST=[test] SEED=[seed]", result.stdout)
+
+    def test_parallel_regression_dry_run_builds_unique_seed_matrix(self):
+        result = subprocess.run(
+            [
+                "make",
+                "-s",
+                "dv-regress-parallel",
+                "DV_TESTS=c910_integer_arithmetic_test c910_branch_jump_test",
+                "RUNS_PER_TEST=3",
+                "JOBS=50",
+                "REPORT_JOBS=8",
+                "SEED_BASE=100",
+                "DRY_RUN=on",
+            ],
+            cwd=SMART_RUN,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertIn("Tests: 2", result.stdout)
+        self.assertIn("Runs per test: 3", result.stdout)
+        self.assertIn("Planned cases: 6", result.stdout)
+        self.assertIn("Seed range: 100..105", result.stdout)
+        self.assertIn("Simulation jobs: 50", result.stdout)
+        self.assertIn("Report jobs: 8", result.stdout)
+
+    def test_parallel_regression_writes_reproducible_manifest(self):
+        with tempfile.TemporaryDirectory() as regress_root:
+            result = subprocess.run(
+                [
+                    "make",
+                    "-s",
+                    "dv-regress-parallel",
+                    "DV_TESTS=c910_integer_arithmetic_test c910_branch_jump_test",
+                    "RUNS_PER_TEST=2",
+                    "SEED_BASE=700",
+                    "DRY_RUN=on",
+                    f"REGRESS_ROOT={regress_root}",
+                ],
+                cwd=SMART_RUN,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            manifest_line = next(
+                line for line in result.stdout.splitlines() if line.startswith("Manifest: ")
+            )
+            manifest = pathlib.Path(manifest_line.removeprefix("Manifest: "))
+            self.assertEqual(pathlib.Path(regress_root), manifest.parent.parent)
+            self.assertEqual(
+                [
+                    "test\tseed\tcase",
+                    "c910_integer_arithmetic_test\t700\tdv_c910_integer_arithmetic_test_seed_700",
+                    "c910_integer_arithmetic_test\t701\tdv_c910_integer_arithmetic_test_seed_701",
+                    "c910_branch_jump_test\t702\tdv_c910_branch_jump_test_seed_702",
+                    "c910_branch_jump_test\t703\tdv_c910_branch_jump_test_seed_703",
+                ],
+                manifest.read_text(encoding="utf-8").splitlines(),
+            )
+
+    def test_parallel_regression_skips_complete_case_unless_forced(self):
+        test_name = "c910_integer_arithmetic_test"
+        seed = 77
+        with tempfile.TemporaryDirectory() as work_root:
+            run_dir = pathlib.Path(work_root) / "runs" / f"dv_{test_name}_seed_{seed}"
+            (run_dir / "coverage.vdb").mkdir(parents=True)
+            (run_dir / "coverage_report").mkdir()
+            (run_dir / f"{test_name}_seed_{seed}.S").write_text("", encoding="utf-8")
+            (run_dir / "run_case.report").write_text("TEST PASS\n", encoding="utf-8")
+            (run_dir / "coverage_report/dashboard.html").write_text("", encoding="utf-8")
+            common_args = [
+                "make",
+                "-s",
+                "dv-regress-parallel",
+                f"DV_TESTS={test_name}",
+                "RUNS_PER_TEST=1",
+                f"SEED_BASE={seed}",
+                "DRY_RUN=on",
+                f"WORK_ROOT={work_root}",
+                f"REGRESS_ROOT={work_root}/regress",
+            ]
+
+            resumed = subprocess.run(
+                common_args,
+                cwd=SMART_RUN,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            forced = subprocess.run(
+                common_args + ["FORCE=on"],
+                cwd=SMART_RUN,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertIn("Cases to simulate: 0", resumed.stdout)
+            self.assertIn("Force rerun: off", resumed.stdout)
+            self.assertIn("Cases to simulate: 1", forced.stdout)
+            self.assertIn("Force rerun: on", forced.stdout)
 
     def test_dv_completion_uses_tohost_bus_write(self):
         makefile = MAKEFILE.read_text(encoding="utf-8")

@@ -83,6 +83,55 @@ Run every test in `riscv-dv/target/c910/testlist.yaml` with the default seed:
 $ make dv-regress DV_TESTS=all
 ```
 
+Run all 100 tests 50 times with globally unique seeds. Simulation uses 50
+workers while URG report generation is limited to 8 workers to avoid saturating
+the coverage-report disk:
+
+```sh
+$ make dv-regress-parallel \
+    DV_TESTS=all \
+    RUNS_PER_TEST=50 \
+    JOBS=50 \
+    REPORT_JOBS=8 \
+    SEED_BASE=1 \
+    DV_TIMEOUT=1800
+```
+
+The seed for test index `i` and run index `j` is
+`SEED_BASE + i * RUNS_PER_TEST + j`, so the default run uses seeds `1` through
+`5000`. Inspect the plan without compiling or running anything with
+`DRY_RUN=on`:
+
+```sh
+$ make dv-regress-parallel DRY_RUN=on
+```
+
+Each batch writes `manifest.tsv`, per-stage logs, and `summary.tsv` below
+`work/regress/`. Running the same command again resumes the same batch: complete
+cases are skipped. A case is complete when its generated `.S` source,
+`TEST PASS` result, `coverage.vdb`, and `coverage_report/dashboard.html` all
+exist. Cases with a passing simulation and `coverage.vdb` but no dashboard only
+rerun URG. Resume by running the same command with the same test selection,
+run count, and seed base.
+
+Force every selected `test+seed` pair through generation, simulation, and URG
+again, even when complete artifacts already exist:
+
+```sh
+$ make dv-regress-parallel \
+    DV_TESTS=all \
+    RUNS_PER_TEST=50 \
+    JOBS=50 \
+    REPORT_JOBS=8 \
+    SEED_BASE=1 \
+    FORCE=on
+```
+
+`DV_TIMEOUT` limits each simulation or report command in seconds.
+The preflight estimates 500 MiB per incomplete case by default; override this
+with `ESTIMATED_CASE_MIB` when measured report sizes differ. Failed or timed-out
+cases remain in `summary.tsv` and are retried by the next non-forced run.
+
 Run the same RV64IMC stimulus configuration at five instruction depths to
 compare how coverage grows from a tiny baseline to an extended run:
 
@@ -135,6 +184,7 @@ smart_run/work/
 |-- build/
 |   |-- default/                 # Shared OpenC910 RTL/VCS build
 |   `-- dv/c910/                 # Shared riscv-dv generator build
+|-- regress/                       # Parallel manifests, logs, and summaries
 `-- runs/
     `-- dv_<test>_seed_<seed>/
         |-- <test>_seed_<seed>.S # Generated test source
