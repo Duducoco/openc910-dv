@@ -50,6 +50,7 @@ DV_TIMEOUT ?= 1800
 ESTIMATED_CASE_MIB ?= 500
 DRY_RUN ?= off
 FORCE ?= off
+WORKER_MAKE ?= $(MAKE)
 REGRESS_ROOT ?= $(WORK_ROOT)/regress
 BUILD_KEY = $(if $(filter $(CASE),debug_gpr debug_memory plic_int sleep),$(CASE),default)
 BUILD_DIR = $(WORK_ROOT)/build/$(BUILD_KEY)
@@ -460,7 +461,7 @@ dv-regress-parallel:
 	  --estimated-case-mib "$(ESTIMATED_CASE_MIB)" \
 	  --work-root "$(abspath $(WORK_ROOT))" \
 	  --regress-root "$(abspath $(REGRESS_ROOT))" \
-	  --make-command "$(MAKE)" \
+	  --make-command "$(WORKER_MAKE)" \
 	  $(if $(filter on,$(DRY_RUN)),--dry-run,) \
 	  $(if $(filter on,$(FORCE)),--force,)
 

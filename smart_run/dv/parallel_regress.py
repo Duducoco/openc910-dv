@@ -156,37 +156,90 @@ def run_make(case, target, args, log_path):
     return CommandResult(case, returncode, time.monotonic() - started, detail)
 
 
-def run_phase(cases, jobs, target, log_suffix, args, batch_dir):
-    results = {}
-    if not cases:
-        return results
+def future_result(future, case):
+    try:
+        return future.result()
+    except Exception as error:
+        return CommandResult(case, 1, 0.0, f"worker failed: {error}")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as executor:
-        futures = {
-            executor.submit(
-                run_make,
-                case,
-                target,
-                args,
-                batch_dir / "logs" / f"{case.name}.{log_suffix}.log",
+
+def submit_case(executor, case, target, log_suffix, args, batch_dir):
+    return executor.submit(
+        run_make,
+        case,
+        target,
+        args,
+        batch_dir / "logs" / f"{case.name}.{log_suffix}.log",
+    )
+
+
+def run_pipeline(simulation_cases, report_cases, statuses, args, batch_dir):
+    simulation_total = len(simulation_cases)
+    simulation_completed = 0
+    report_completed = 0
+
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=args.jobs
+    ) as simulation_executor, concurrent.futures.ThreadPoolExecutor(
+        max_workers=args.report_jobs
+    ) as report_executor:
+        simulation_futures = {
+            submit_case(
+                simulation_executor, case, "dv-simcase", "sim", args, batch_dir
             ): case
-            for case in cases
+            for case in simulation_cases
         }
-        completed = 0
-        for future in concurrent.futures.as_completed(futures):
-            try:
-                result = future.result()
-            except Exception as error:
-                case = futures[future]
-                result = CommandResult(case, 1, 0.0, f"worker failed: {error}")
-            results[result.case.name] = result
-            completed += 1
-            print(
-                f"[{target} {completed}/{len(cases)}] "
-                f"{result.case.name}: {result.detail} ({result.elapsed:.1f}s)",
-                flush=True,
+        report_futures = {
+            submit_case(
+                report_executor, case, "dv-reportcase", "report", args, batch_dir
+            ): case
+            for case in report_cases
+        }
+
+        while simulation_futures or report_futures:
+            done, _pending = concurrent.futures.wait(
+                tuple(simulation_futures) + tuple(report_futures),
+                return_when=concurrent.futures.FIRST_COMPLETED,
             )
-    return results
+            for future in done:
+                if future in simulation_futures:
+                    case = simulation_futures.pop(future)
+                    result = future_result(future, case)
+                    simulation_completed += 1
+                    simulated, _reported = case_state(case, args.work_root)
+                    if result.returncode == 0 and simulated:
+                        statuses[case.name] = ("pass", "pending", "pending")
+                        report_future = submit_case(
+                            report_executor,
+                            case,
+                            "dv-reportcase",
+                            "report",
+                            args,
+                            batch_dir,
+                        )
+                        report_futures[report_future] = case
+                    else:
+                        statuses[case.name] = (result.detail, "not-run", "fail")
+                    print(
+                        f"[dv-simcase {simulation_completed}/{simulation_total}] "
+                        f"{case.name}: {result.detail} ({result.elapsed:.1f}s)",
+                        flush=True,
+                    )
+                else:
+                    case = report_futures.pop(future)
+                    result = future_result(future, case)
+                    report_completed += 1
+                    _simulated, reported = case_state(case, args.work_root)
+                    simulation = statuses[case.name][0]
+                    if result.returncode == 0 and reported:
+                        statuses[case.name] = (simulation, "pass", "pass")
+                    else:
+                        statuses[case.name] = (simulation, result.detail, "fail")
+                    print(
+                        f"[dv-reportcase {report_completed} completed] "
+                        f"{case.name}: {result.detail} ({result.elapsed:.1f}s)",
+                        flush=True,
+                    )
 
 
 def write_summary(path, cases, statuses):
@@ -303,34 +356,11 @@ def main():
             return 1
 
     print(
-        f"Simulation phase: {len(simulation_queue)} queued, "
-        f"{len(cases) - len(simulation_queue)} reusable",
+        f"Pipeline: {len(simulation_queue)} simulations and "
+        f"{len(report_queue)} resumed reports queued",
         flush=True,
     )
-    simulation_results = run_phase(
-        simulation_queue, args.jobs, "dv-simcase", "sim", args, batch_dir
-    )
-    for case in simulation_queue:
-        result = simulation_results[case.name]
-        simulated, _reported = case_state(case, args.work_root)
-        if result.returncode == 0 and simulated:
-            statuses[case.name] = ("pass", "pending", "pending")
-            report_queue.append(case)
-        else:
-            statuses[case.name] = (result.detail, "not-run", "fail")
-
-    print(f"Report phase: {len(report_queue)} queued", flush=True)
-    report_results = run_phase(
-        report_queue, args.report_jobs, "dv-reportcase", "report", args, batch_dir
-    )
-    for case in report_queue:
-        result = report_results[case.name]
-        _simulated, reported = case_state(case, args.work_root)
-        simulation = statuses[case.name][0]
-        if result.returncode == 0 and reported:
-            statuses[case.name] = (simulation, "pass", "pass")
-        else:
-            statuses[case.name] = (simulation, result.detail, "fail")
+    run_pipeline(simulation_queue, report_queue, statuses, args, batch_dir)
 
     summary = batch_dir / "summary.tsv"
     write_summary(summary, cases, statuses)

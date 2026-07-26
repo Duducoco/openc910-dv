@@ -85,7 +85,9 @@ $ make dv-regress DV_TESTS=all
 
 Run all 100 tests 50 times with globally unique seeds. Simulation uses 50
 workers while URG report generation is limited to 8 workers to avoid saturating
-the coverage-report disk:
+the coverage-report disk. The two worker pools run as a pipeline: each passing
+simulation is submitted to URG immediately while the remaining simulations
+continue:
 
 ```sh
 $ make dv-regress-parallel \

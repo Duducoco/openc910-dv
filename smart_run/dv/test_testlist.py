@@ -314,6 +314,71 @@ class C910TestlistTest(unittest.TestCase):
             self.assertIn("Cases to simulate: 1", forced.stdout)
             self.assertIn("Force rerun: on", forced.stdout)
 
+    def test_parallel_regression_reports_completed_case_while_simulations_continue(self):
+        with tempfile.TemporaryDirectory() as work_root:
+            helper = pathlib.Path(work_root) / "fake_make.py"
+            helper.write_text(
+                """#!/usr/bin/env python3
+import pathlib
+import sys
+import time
+
+work_root = pathlib.Path(sys.argv[sys.argv.index("--work-root") + 1])
+target = next(
+    arg for arg in sys.argv if arg in ("dv-preflight", "dv-simcase", "dv-reportcase")
+)
+values = dict(arg.split("=", 1) for arg in sys.argv if "=" in arg)
+if target == "dv-preflight":
+    raise SystemExit(0)
+
+test = values["DV_TEST"]
+seed = int(values["SEED"])
+case = f"dv_{test}_seed_{seed}"
+run_dir = work_root / "runs" / case
+run_dir.mkdir(parents=True, exist_ok=True)
+events = work_root / "events.log"
+
+if target == "dv-simcase":
+    time.sleep(0.1 if seed == 900 else 1.0)
+    (run_dir / f"{test}_seed_{seed}.S").write_text("", encoding="utf-8")
+    (run_dir / "coverage.vdb").mkdir(exist_ok=True)
+    (run_dir / "run_case.report").write_text("TEST PASS\\n", encoding="utf-8")
+    with events.open("a", encoding="utf-8") as event_file:
+        event_file.write(f"sim:{seed}\\n")
+else:
+    with events.open("a", encoding="utf-8") as event_file:
+        event_file.write(f"report:{seed}\\n")
+    (run_dir / "coverage_report").mkdir(exist_ok=True)
+    (run_dir / "coverage_report/dashboard.html").write_text("", encoding="utf-8")
+""",
+                encoding="utf-8",
+            )
+            make_command = f"python3 {helper} --work-root {work_root}"
+            result = subprocess.run(
+                [
+                    "make",
+                    "-s",
+                    "dv-regress-parallel",
+                    "DV_TESTS=c910_integer_arithmetic_test c910_branch_jump_test",
+                    "RUNS_PER_TEST=1",
+                    "JOBS=2",
+                    "REPORT_JOBS=1",
+                    "SEED_BASE=900",
+                    "DV_TIMEOUT=10",
+                    "ESTIMATED_CASE_MIB=1",
+                    f"WORK_ROOT={work_root}",
+                    f"REGRESS_ROOT={work_root}/regress",
+                    f"WORKER_MAKE={make_command}",
+                ],
+                cwd=SMART_RUN,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+            events = (pathlib.Path(work_root) / "events.log").read_text().splitlines()
+            self.assertLess(events.index("report:900"), events.index("sim:901"))
+
     def test_dv_completion_uses_tohost_bus_write(self):
         makefile = MAKEFILE.read_text(encoding="utf-8")
         testbench = TESTBENCH.read_text(encoding="utf-8")
