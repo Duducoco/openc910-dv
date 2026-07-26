@@ -17,7 +17,7 @@ AS      = ${TOOL_EXTENSION}/riscv64-unknown-elf-as
 LINK    = ${TOOL_EXTENSION}/riscv64-unknown-elf-ld
 OBJDUMP = ${TOOL_EXTENSION}/riscv64-unknown-elf-objdump
 OBJCOPY = ${TOOL_EXTENSION}/riscv64-unknown-elf-objcopy
-CONVERT	=../tests/bin/Srec2vmem
+CONVERT	=${SMART_RUN_ROOT}/tests/bin/Srec2vmem
 
 SSRC = $(wildcard *.S)
 sSRC = $(wildcard *.s)
@@ -105,4 +105,3 @@ all : ${FILE}.pat ${FILE}.hex ${FILE}.elf ${FILE}.obj
 .PHONY :clean 
 clean:
 	rm -rf *.o *.pat *.elf *.obj *.hex
-

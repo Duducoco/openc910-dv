@@ -243,6 +243,13 @@ module tb();
   reg [63:0] value0;
   reg [63:0] value1;
   reg [63:0] value2;
+  reg        dv_done_en;
+  reg [39:0] dv_done_pc;
+
+  initial
+  begin
+    dv_done_en = $value$plusargs("DV_DONE_PC=%h", dv_done_pc);
+  end
   
   
   always @(posedge clk)
@@ -272,7 +279,7 @@ module tb();
   
      $finish;
     end
-      else if (value0 == 64'h2382348720 || value1 == 64'h2382348720 || value2 == 64'h444333222)
+      else if (value0 == 64'h2382348720 || value1 == 64'h2382348720 || value2 == 64'h2382348720)
     begin
      $display("**********************************************");
      $display("*    simulation finished with error          *");
@@ -281,9 +288,23 @@ module tb();
      FILE = $fopen("run_case.report","w");
      $fwrite(FILE,"TEST FAIL");   
   
-     $finish;
+       $finish;
     end
-  
+
+    else if(dv_done_en &&
+            ((`tb_retire0 && (`retire0_pc == dv_done_pc)) ||
+             (`tb_retire1 && (`retire1_pc == dv_done_pc)) ||
+             (`tb_retire2 && (`retire2_pc == dv_done_pc))))
+    begin
+      $display("**********************************************");
+      $display("*    riscv-dv simulation finished successfully *");
+      $display("**********************************************");
+      #10;
+      FILE = $fopen("run_case.report","w");
+      $fwrite(FILE,"TEST PASS");
+      $finish;
+    end
+
     else if((cpu_awlen[3:0] == 4'b0) &&
   //     (cpu_awaddr[31:0] == 32'h6000fff8) &&
   //     (cpu_awaddr[31:0] == 32'h0003fff8) &&

@@ -13,6 +13,8 @@
 #limitations under the License.
 #*/
 
+export SMART_RUN_ROOT := $(abspath .)
+
 include ./setup/smart_cfg.mk
 include ./setup/env_check.mk
 
@@ -28,6 +30,16 @@ COV_REPORT_DIR = coverage_report
 THREADS = 4
 REBUILD = off
 WORK_ROOT = ./work
+DV_ROOT ?= $(abspath ../riscv-dv)
+DV_TARGET ?= c910
+DV_TESTLIST ?= $(DV_ROOT)/target/$(DV_TARGET)/testlist.yaml
+DV_TEST ?=
+SEED ?= 1
+DV_CASE = dv_$(DV_TEST)_seed_$(SEED)
+DV_BUILD_DIR = $(WORK_ROOT)/build/dv/$(DV_TARGET)
+DV_RUN_DIR = $(WORK_ROOT)/runs/$(DV_CASE)
+DV_GEN_DIR = $(DV_RUN_DIR)/.dv-gen
+DV_SOURCE = $(DV_RUN_DIR)/$(DV_TEST)_seed_$(SEED).S
 BUILD_KEY = $(if $(filter $(CASE),debug_gpr debug_memory plic_int sleep),$(CASE),default)
 BUILD_DIR = $(WORK_ROOT)/build/$(BUILD_KEY)
 RUN_DIR = $(WORK_ROOT)/runs/$(if $(strip $(CASE)),$(CASE),compile)
@@ -116,7 +128,7 @@ SIMULATOR_COV_OPT := -cm $(COV_METRICS) -cm_dir $(COV_DIR)
 SIMV_COV_OPT := -cm $(COV_METRICS) -cm_dir $(COV_DIR)
 endif
 ifeq ($(UPF), on)
-SIMULATOR_POWER_OPT := -upf ../impl/upf/example_cpu_power_spec.upf +define+UPF_INCLUDED
+SIMULATOR_POWER_OPT := -upf $(SMART_RUN_ROOT)/impl/upf/example_cpu_power_spec.upf +define+UPF_INCLUDED
 SIMV_POWER_OPT      := +fsdb+power +fsdb+all
 else
 SIMULATOR_POWER_OPT :=
@@ -146,23 +158,19 @@ else
 endif
 
 ifeq ($(SIM), iverilog)
-    SIM_FILELIST := $(SIM_FILELIST) -f ${CODE_BASE_PATH}/gen_rtl/filelists/C910_asic_rtl.fl -c ../logical/filelists/smart.fl -c ../logical/filelists/tb.fl
+    SIM_FILELIST := $(SIM_FILELIST) -f ${CODE_BASE_PATH}/gen_rtl/filelists/C910_asic_rtl.fl -c $(SMART_RUN_ROOT)/logical/filelists/smart.fl -c $(SMART_RUN_ROOT)/logical/filelists/tb.fl
 else
     ifeq ($(SIM), verilator)
-    SIM_FILELIST := $(SIM_FILELIST) -f ../logical/filelists/sim_verilator.fl
+    SIM_FILELIST := $(SIM_FILELIST) -f $(SMART_RUN_ROOT)/logical/filelists/sim_verilator.fl
     else
-    SIM_FILELIST := $(SIM_FILELIST) -f ../logical/filelists/sim.fl
+    SIM_FILELIST := $(SIM_FILELIST) -f $(SMART_RUN_ROOT)/logical/filelists/sim.fl
     endif
 endif
 
 prepare-work:
 	@mkdir -p "$(BUILD_DIR)" "$(RUN_DIR)"
-	@ln -sfn ../../logical "$(WORK_ROOT)/build/logical"
-	@ln -sfn ../../tests "$(WORK_ROOT)/build/tests"
-	@ln -sfn ../../impl "$(WORK_ROOT)/build/impl"
-	@ln -sfn ../../logical "$(WORK_ROOT)/runs/logical"
-	@ln -sfn ../../tests "$(WORK_ROOT)/runs/tests"
-	@ln -sfn ../../impl "$(WORK_ROOT)/runs/impl"
+	@rm -f "$(WORK_ROOT)/build/logical" "$(WORK_ROOT)/build/tests" "$(WORK_ROOT)/build/impl"
+	@rm -f "$(WORK_ROOT)/runs/logical" "$(WORK_ROOT)/runs/tests" "$(WORK_ROOT)/runs/impl"
 
 compile: prepare-work
 	@echo "  [THead-smart] Compiling smart now ... "
@@ -170,8 +178,10 @@ compile: prepare-work
 	@echo "  [THead-smart] BUILD_DIR = $(BUILD_DIR)"
 ifeq ($(SIM), vcs)
 	@current_config=$$(cat "$(BUILD_DIR)/.build-config" 2>/dev/null || true); \
+	newer_source=$$(find ./logical ./setup "$(CODE_BASE_PATH)" -type f \
+	  -newer "$(BUILD_DIR)/simv" -print -quit 2>/dev/null); \
 	if [ "$(REBUILD)" = "on" ] || [ ! -x "$(BUILD_DIR)/simv" ] || \
-	    [ "$$current_config" != "$(BUILD_CONFIG)" ]; then \
+	    [ "$$current_config" != "$(BUILD_CONFIG)" ] || [ -n "$$newer_source" ]; then \
 	  $(MAKE) -s cleansim; \
 	  printf '%s\n' '$(BUILD_CONFIG)' > "$(BUILD_DIR)/.build-config"; \
 	  cd "$(BUILD_DIR)" && vcs $(SIMULATOR_OPT) $(TIMESCALE) $(SIMULATOR_DEF) $(SIM_FILELIST) $(SIM_DUMP) $(SIMULATOR_LOG) $(SIMULATOR_POWER_OPT) $(SIMULATOR_COV_OPT); \
@@ -298,6 +308,104 @@ regress: prepare-work
 	cat ./tests/regress/regress_report
 
 ################################################################################
+# riscv-dv generated cases
+################################################################################
+dv-show:
+	@python3 ./dv/testlist.py "$(DV_TESTLIST)"
+
+check-dv-args:
+	@test -n "$(DV_TEST)" || { echo "DV_TEST is required; run 'make dv-show'" >&2; exit 2; }
+	@printf '%s' "$(DV_TEST)" | grep -Eq '^[a-z0-9_]+$$' || { echo "Invalid DV_TEST: $(DV_TEST)" >&2; exit 2; }
+	@printf '%s' "$(SEED)" | grep -Eq '^[1-9][0-9]*$$' || { echo "SEED must be a positive integer" >&2; exit 2; }
+	@python3 ./dv/testlist.py "$(DV_TESTLIST)" "$(DV_TEST)"
+
+dv-compile:
+	@mkdir -p "$(DV_BUILD_DIR)"
+	@current_config=$$(cat "$(DV_BUILD_DIR)/.build-config" 2>/dev/null || true); \
+	dv_diff_hash=$$(git -C "$(DV_ROOT)" diff --no-ext-diff | sha256sum | cut -d' ' -f1); \
+	wanted_config="DV_COMMIT=$$(git -C "$(DV_ROOT)" rev-parse HEAD) DV_DIFF=$$dv_diff_hash TARGET=$(DV_TARGET)"; \
+	if [ "$(REBUILD)" = "on" ] || [ ! -x "$(DV_BUILD_DIR)/vcs_simv" ] || [ "$$current_config" != "$$wanted_config" ]; then \
+	  rm -rf "$(DV_BUILD_DIR)/vcs_simv" "$(DV_BUILD_DIR)/vcs_simv.daidir" "$(DV_BUILD_DIR)/vcs_simv.csrc"; \
+	  cd "$(DV_ROOT)" && python3 run.py \
+	    --custom_target "target/$(DV_TARGET)" \
+	    --test all --simulator vcs --steps gen --co \
+	    --isa rv64imafdcxtheadc --mabi lp64d \
+	    --output "$(abspath $(DV_BUILD_DIR))"; \
+	  printf '%s\n' "$$wanted_config" > "$(abspath $(DV_BUILD_DIR))/.build-config"; \
+	else \
+	  echo "  [riscv-dv] Reusing $(DV_BUILD_DIR)/vcs_simv"; \
+	fi
+
+dv-generate: check-dv-args dv-compile
+	@rm -rf "$(DV_RUN_DIR)"
+	@mkdir -p "$(DV_GEN_DIR)"
+	@ln -s "$(abspath $(DV_BUILD_DIR))/vcs_simv" "$(DV_GEN_DIR)/vcs_simv"
+	@if [ -d "$(DV_BUILD_DIR)/vcs_simv.daidir" ]; then \
+	  ln -s "$(abspath $(DV_BUILD_DIR))/vcs_simv.daidir" "$(DV_GEN_DIR)/vcs_simv.daidir"; \
+	fi
+	@cd "$(DV_ROOT)" && python3 run.py \
+	  --custom_target "target/$(DV_TARGET)" \
+	  --test "$(DV_TEST)" --simulator vcs --steps gen --so \
+	  --seed "$(SEED)" --isa rv64imafdcxtheadc --mabi lp64d \
+	  --output "$(abspath $(DV_GEN_DIR))"
+	@cp "$(DV_GEN_DIR)/asm_test/$(DV_TEST)_0.S" "$(DV_SOURCE)"
+	@cp "$(DV_GEN_DIR)/sim_$(DV_TEST)_0.log" "$(DV_RUN_DIR)/dv-generate.log"
+
+dv-buildcase: check-dv-args tool-chain-chk
+	@test -f "$(DV_SOURCE)" || { echo "Missing generated source: $(DV_SOURCE)" >&2; exit 2; }
+	@cd "$(DV_RUN_DIR)" && "$(TOOL_EXTENSION)/riscv64-unknown-elf-gcc" \
+	  -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles \
+	  -I"$(DV_ROOT)/target/$(DV_TARGET)" -I"$(DV_ROOT)/user_extension" \
+	  -T"$(abspath ./dv/c910.ld)" -march=rv64imafdcxtheadc -mabi=lp64d \
+	  "$(notdir $(DV_SOURCE))" -o dv_test.elf
+	@cd "$(DV_RUN_DIR)" && "$(TOOL_EXTENSION)/riscv64-unknown-elf-nm" dv_test.elf | \
+	  awk '$$3 == "write_tohost" { print substr($$1, length($$1) - 9) }' > dv_done.pc
+	@test -s "$(DV_RUN_DIR)/dv_done.pc" || { echo "Generated ELF has no write_tohost symbol" >&2; exit 2; }
+	@cd "$(DV_RUN_DIR)" && "$(TOOL_EXTENSION)/riscv64-unknown-elf-objcopy" \
+	  -O srec dv_test.elf inst.hex -j .text -j .rodata
+	@cd "$(DV_RUN_DIR)" && "$(TOOL_EXTENSION)/riscv64-unknown-elf-objcopy" \
+	  -O srec dv_test.elf data.hex -j .data -j .test_data -j .bss
+	@cd "$(DV_RUN_DIR)" && "$(abspath ./tests/bin/Srec2vmem)" inst.hex inst.pat
+	@cd "$(DV_RUN_DIR)" && "$(abspath ./tests/bin/Srec2vmem)" data.hex data.pat
+
+dv-runcase: check-dv-args
+	@$(MAKE) -s compile CASE="$(DV_CASE)" SIM=vcs COV=on
+	@$(MAKE) -s dv-generate DV_TEST="$(DV_TEST)" SEED="$(SEED)"
+	@$(MAKE) -s dv-buildcase DV_TEST="$(DV_TEST)" SEED="$(SEED)"
+	@rm -rf "$(DV_RUN_DIR)/$(COV_DIR)"
+	@cp -a "$(WORK_ROOT)/build/default/$(COV_DIR)" "$(DV_RUN_DIR)/$(COV_DIR)"
+	@done_pc=$$(cat "$(DV_RUN_DIR)/dv_done.pc"); \
+	  cd "$(DV_RUN_DIR)" && "$(abspath $(WORK_ROOT)/build/default)/simv" \
+	    -l run.vcs.log -cm $(COV_METRICS) -cm_dir $(COV_DIR) +DV_DONE_PC=$$done_pc
+	@test "$$(cat "$(DV_RUN_DIR)/run_case.report" 2>/dev/null)" = "TEST PASS" || { \
+	  echo "riscv-dv case failed: $(DV_CASE)" >&2; exit 1; }
+	@done_pc=$$(cat "$(DV_RUN_DIR)/dv_done.pc"); \
+	  printf '%s\n' \
+	    'CASE=$(DV_CASE)' \
+	    'DV_TEST=$(DV_TEST)' \
+	    'SEED=$(SEED)' \
+	    "DV_DONE_PC=$$done_pc" \
+	    "OPENC910_COMMIT=$$(git rev-parse HEAD)" \
+	    "RISCV_DV_COMMIT=$$(git -C "$(DV_ROOT)" rev-parse HEAD)" \
+	    > "$(DV_RUN_DIR)/run.meta"
+	@$(MAKE) -s coverage CASE="$(DV_CASE)" SIM=vcs COV=on
+	@rm -rf "$(DV_GEN_DIR)" "$(DV_RUN_DIR)/dv_test.elf" \
+	  "$(DV_RUN_DIR)/inst.hex" "$(DV_RUN_DIR)/data.hex" \
+	  "$(DV_RUN_DIR)/inst.pat" "$(DV_RUN_DIR)/data.pat" \
+	  "$(DV_RUN_DIR)/dv_done.pc" "$(DV_RUN_DIR)/cm.log" \
+	  "$(DV_RUN_DIR)/ucli.key"
+
+dv-regress:
+	@tests="$(DV_TESTS)"; \
+	if [ -z "$$tests" ] || [ "$$tests" = "all" ]; then tests="$$(python3 ./dv/testlist.py "$(DV_TESTLIST)")"; fi; \
+	seeds="$(SEEDS)"; if [ -z "$$seeds" ]; then seeds=1; fi; \
+	for test in $$tests; do \
+	  for seed in $$seeds; do \
+	    $(MAKE) -s dv-runcase DV_TEST="$$test" SEED="$$seed" || exit $$?; \
+	  done; \
+	done
+
+################################################################################
 # Misc
 ################################################################################
 .DEFAULT_GOAL := help
@@ -335,6 +443,9 @@ help:
 	@echo "    buildcase CASE=[casename]       : compile a C/assembly case"
 	@echo "    runcase CASE=[casename]         : compile and run a case; report coverage when COV=on"
 	@echo "    regress                         : run all cases and summarize results"
+	@echo "    dv-show                         : list OpenC910 riscv-dv tests"
+	@echo "    dv-runcase DV_TEST=[test] SEED=[seed] : generate, simulate, and report coverage"
+	@echo "    dv-regress DV_TESTS=[tests] SEEDS=[seeds] : run generated coverage cases"
 	@echo "    coverage                        : generate the VCS coverage report"
 	@echo "    memlist                         : generate the SRAM list with VCS/Verdi"
 	@echo "    cleansim / cleancase / clean    : remove generated files"
@@ -349,8 +460,10 @@ help:
 	@echo "    make runcase CASE=hello_world SIM=vcs"
 	@echo "    make runcase CASE=hello_world SIM=vcs COV=on"
 	@echo "    make coverage CASE=hello_world SIM=vcs COV=on"
+	@echo "    make dv-runcase DV_TEST=c910_integer_arithmetic_test SEED=1"
 	@echo "    make runcase CASE=coremark SIM=verilator THREADS=8"
 
 .PHONY: prepare-work compile buildVerilator cleansim cleanVerilator showcase \
 	buildcase cleancase prunecase runVerilator runcase regress memlist coverage \
+	dv-show check-dv-args dv-compile dv-generate dv-buildcase dv-runcase dv-regress \
 	clean help

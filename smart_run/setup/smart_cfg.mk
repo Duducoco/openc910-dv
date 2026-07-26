@@ -138,16 +138,16 @@ sleep_build:
 
 # Adjust verilog filelist for *.v case...
 ifeq ($(CASE), debug_gpr)
-SIM_FILELIST := ../tests/cases/debug/debug_gpr/had_drv.vh ../tests/cases/debug/debug_gpr/debug_read_write_gpr.v
+SIM_FILELIST := $(SMART_RUN_ROOT)/tests/cases/debug/debug_gpr/had_drv.vh $(SMART_RUN_ROOT)/tests/cases/debug/debug_gpr/debug_read_write_gpr.v
 endif
 ifeq ($(CASE), debug_memory)
-SIM_FILELIST := ../tests/cases/debug/debug_memory/had_drv.vh ../tests/cases/debug/debug_memory/debug_read_write_memory.v
+SIM_FILELIST := $(SMART_RUN_ROOT)/tests/cases/debug/debug_memory/had_drv.vh $(SMART_RUN_ROOT)/tests/cases/debug/debug_memory/debug_read_write_memory.v
 endif
 ifeq ($(CASE), plic_int)
-SIM_FILELIST := ../tests/cases/interrupt/int_smoke/ct_plic_int_smoke_hw.v
+SIM_FILELIST := $(SMART_RUN_ROOT)/tests/cases/interrupt/int_smoke/ct_plic_int_smoke_hw.v
 endif
 ifeq ($(CASE), sleep)
-SIM_FILELIST := ../tests/cases/sleep/sleep_test.vh
+SIM_FILELIST := $(SMART_RUN_ROOT)/tests/cases/sleep/sleep_test.vh
 endif
 
 
@@ -155,5 +155,4 @@ define newline
 
 
 endef
-
 
