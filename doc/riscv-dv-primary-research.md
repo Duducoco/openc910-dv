@@ -121,6 +121,7 @@ Local toolchain verification:
 - The scalar, private-memory, and cache/synchronization targets were generated with VCS. All 101 custom-instruction families appeared; each generator run reported `TEST PASSED` with zero UVM warnings, errors, and fatals.
 - All three generated assemblies were compiled and converted to binary by the Xuantie GCC/objcopy tools. Disassembly confirmed the private mnemonics and that the C910-specific startup selected by the target include path sets `MXSTATUS.THEADISAEE` before executing the generated stream.
 - These VCS runs simulate the `riscv-dv` UVM generator, not the OpenC910 RTL DUT. Standard ISS builds do not model these vendor instructions, so the target disables ISS comparison. Cache-state correctness still requires C910 RTL monitors or a cache-aware reference model.
+- The three generated groups were also linked to the smart testbench memory map and executed by the OpenC910 RTL under VCS. Scalar seed 13, private-memory seed 12, and cache/synchronization seed 11 all reached the testbench PASS condition. During this validation, the memory test exposed that floating-point state was disabled after machine-mode initialization; adding `+enable_floating_point=1` to that test fixed the eight private floating-point memory operations. This RTL run proves decode/retirement and completion for all 101 generated families, but it still does not provide a reference oracle for cache-state semantics.
 
 Source URLs for this addendum:
 - https://github.com/chipsalliance/riscv-dv/blob/master/docs/source/overview.rst
