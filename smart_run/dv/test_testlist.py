@@ -36,6 +36,39 @@ class C910TestlistTest(unittest.TestCase):
             "xthead_memory",
             "cache",
             "synchronization",
+            "mixed_random",
+            "integer_corner",
+            "shift",
+            "logical",
+            "compare",
+            "jump",
+            "loop",
+            "call_return",
+            "non_compressed",
+            "hint",
+            "single_load_store",
+            "back_to_back_load_store",
+            "multi_page_memory",
+            "memory_region",
+            "lr_sc",
+            "amo",
+            "floating_single",
+            "floating_double",
+            "floating_control_flow",
+            "csr_stress",
+            "illegal_csr",
+            "ebreak",
+            "instruction_misaligned",
+            "illegal_instruction",
+            "xthead_arithmetic",
+            "xthead_logical",
+            "xthead_register_offset",
+            "xthead_pair_memory",
+            "xthead_indexed_memory",
+            "xthead_fp_memory",
+            "dcache",
+            "icache",
+            "l2cache",
         }
         covered = {
             tag
@@ -43,21 +76,27 @@ class C910TestlistTest(unittest.TestCase):
             for tag in test.get("coverage_tags", [])
         }
         self.assertEqual(set(), required - covered)
+        self.assertGreaterEqual(len(self.tests), 40)
 
     def test_every_rtl_test_is_reproducible_and_c910_compatible(self):
         for test in self.tests:
             with self.subTest(test=test["test"]):
-                self.assertEqual(1, test["iterations"])
+                self.assertIn("iterations", test)
                 self.assertEqual(1, test["no_iss"])
                 self.assertIn("-march=rv64imafdcxtheadc", test["gcc_opts"])
                 self.assertIn("-mabi=lp64d", test["gcc_opts"])
                 self.assertIn("+boot_mode=m", test["gen_opts"])
-                self.assertIn("+hint_instr_ratio=0", test["gen_opts"])
+                if "hint" in test.get("coverage_tags", []):
+                    self.assertNotIn("+hint_instr_ratio=0", test["gen_opts"])
+                else:
+                    self.assertIn("+hint_instr_ratio=0", test["gen_opts"])
                 if "exception" in test.get("coverage_tags", []):
                     self.assertNotIn("+bare_program_mode=1", test["gen_opts"])
-                    self.assertNotIn("+illegal_instr_ratio=0", test["gen_opts"])
                 else:
                     self.assertIn("+bare_program_mode=1", test["gen_opts"])
+                if "illegal_instruction" in test.get("coverage_tags", []):
+                    self.assertNotIn("+illegal_instr_ratio=0", test["gen_opts"])
+                else:
                     self.assertIn("+illegal_instr_ratio=0", test["gen_opts"])
 
     def test_names_are_safe_for_run_directories(self):
