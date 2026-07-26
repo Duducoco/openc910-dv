@@ -383,6 +383,10 @@ dv-generate: $(DV_GENERATE_DEPS)
 	  --output "$(abspath $(DV_GEN_DIR))"
 	@cp "$(DV_GEN_DIR)/asm_test/$(DV_TEST)_0.S" "$(DV_SOURCE)"
 	@cp "$(DV_GEN_DIR)/sim_$(DV_TEST)_0.log" "$(DV_RUN_DIR)/dv-generate.log"
+	@if [ "$(DV_TEST)" = "c910_compressed_instr_test" ]; then \
+	  python3 "$(DV_ROOT)/target/$(DV_TARGET)/check_generated_asm.py" \
+	    --group bounded-compressed "$(DV_SOURCE)"; \
+	fi
 
 dv-buildcase: check-dv-args tool-chain-chk
 	@test -f "$(DV_SOURCE)" || { echo "Missing generated source: $(DV_SOURCE)" >&2; exit 2; }

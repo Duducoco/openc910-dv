@@ -127,6 +127,18 @@ class C910TestlistTest(unittest.TestCase):
                 else:
                     self.assertEqual(common_options, options_without_count)
 
+    def test_compressed_smoke_test_has_bounded_control_flow(self):
+        tests_by_name = {test["test"]: test for test in self.tests}
+        compressed = tests_by_name["c910_compressed_instr_test"]
+        options = compressed["gen_opts"]
+
+        self.assertIn("compressed", compressed["coverage_tags"])
+        self.assertIn("+march=RV32I,RV64I,RV32C,RV64C", options)
+        self.assertIn("+num_of_sub_program=0", options)
+        self.assertIn("+no_branch_jump=1", options)
+        self.assertIn("+no_load_store=1", options)
+        self.assertNotIn("+disable_compressed_instr=1", options)
+
     def test_execution_domains_have_comparable_depth_ladders(self):
         domains = {
             "branch": ("branch_prediction", (200, 1000, 10000)),
