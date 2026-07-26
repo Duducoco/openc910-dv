@@ -96,7 +96,7 @@ $ make dv-regress-parallel \
     JOBS=50 \
     REPORT_JOBS=8 \
     SEED_BASE=1 \
-    DV_TIMEOUT=1800
+    DV_TIMEOUT=600
 ```
 
 The seed for test index `i` and run index `j` is

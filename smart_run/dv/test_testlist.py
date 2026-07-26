@@ -248,6 +248,7 @@ class C910TestlistTest(unittest.TestCase):
         self.assertIn("Seed range: 100..105", result.stdout)
         self.assertIn("Simulation jobs: 50", result.stdout)
         self.assertIn("Report jobs: 8", result.stdout)
+        self.assertIn("Stage timeout: 600s", result.stdout)
 
     def test_parallel_regression_writes_reproducible_manifest(self):
         with tempfile.TemporaryDirectory() as regress_root:

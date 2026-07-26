@@ -55,7 +55,7 @@ def parse_args():
     parser.add_argument("--jobs", type=positive_int, default=50)
     parser.add_argument("--report-jobs", type=positive_int, default=8)
     parser.add_argument("--seed-base", type=positive_int, default=1)
-    parser.add_argument("--timeout", type=positive_int, default=1800)
+    parser.add_argument("--timeout", type=positive_int, default=600)
     parser.add_argument("--estimated-case-mib", type=positive_int, default=500)
     parser.add_argument("--work-root", type=pathlib.Path, required=True)
     parser.add_argument("--regress-root", type=pathlib.Path, required=True)
@@ -291,6 +291,7 @@ def main():
     print(f"Seed range: {args.seed_base}..{last_seed}")
     print(f"Simulation jobs: {args.jobs}")
     print(f"Report jobs: {args.report_jobs}")
+    print(f"Stage timeout: {args.timeout}s")
     print(f"Manifest: {manifest.resolve()}")
 
     states = {case.name: case_state(case, args.work_root) for case in cases}
