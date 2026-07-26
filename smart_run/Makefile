@@ -41,6 +41,7 @@ DV_RUN_DIR = $(WORK_ROOT)/runs/$(DV_CASE)
 DV_GEN_DIR = $(DV_RUN_DIR)/.dv-gen
 DV_SOURCE = $(DV_RUN_DIR)/$(DV_TEST)_seed_$(SEED).S
 DV_TOHOST_HEX ?= 01ffffe0
+DV_MAX_RETIRED ?= 1000000
 DV_TESTS ?= all
 RUNS_PER_TEST ?= 50
 JOBS ?= 50
@@ -414,7 +415,7 @@ dv-simcase: check-dv-args check-dv-prebuilt
 	@cp -a "$(WORK_ROOT)/build/default/$(COV_DIR)" "$(DV_RUN_DIR)/$(COV_DIR)"
 	@cd "$(DV_RUN_DIR)" && "$(abspath $(WORK_ROOT)/build/default)/simv" \
 	  -l run.vcs.log -cm $(COV_METRICS) -cm_dir $(COV_DIR) \
-	  +DV_TOHOST=$(DV_TOHOST_HEX)
+	  +DV_TOHOST=$(DV_TOHOST_HEX) +DV_MAX_RETIRED=$(DV_MAX_RETIRED)
 	@test "$$(cat "$(DV_RUN_DIR)/run_case.report" 2>/dev/null)" = "TEST PASS" || { \
 	  echo "riscv-dv case failed: $(DV_CASE)" >&2; exit 1; }
 	@printf '%s\n' \
@@ -524,6 +525,7 @@ help:
 	@echo "    RUNS_PER_TEST=                  : parallel runs per DV test (default: 50)"
 	@echo "    JOBS= / REPORT_JOBS=            : simulation/report concurrency (defaults: 50/8)"
 	@echo "    SEED_BASE= / DV_TIMEOUT=         : first seed and per-stage timeout in seconds"
+	@echo "    DV_MAX_RETIRED=                  : maximum retired instructions per DV case (default: 1000000)"
 	@echo "    DRY_RUN=on                      : write and display the parallel plan only"
 	@echo "    FORCE=on                        : rerun complete test+seed cases"
 	@echo "  Examples:"

@@ -200,6 +200,15 @@ module tb();
   
   reg [31:0] retire_inst_in_period;
   reg [31:0] cycle_count;
+  reg [63:0] dv_retired_count;
+  integer dv_max_retired;
+
+  initial
+  begin
+    dv_max_retired = 0;
+    if ($value$plusargs("DV_MAX_RETIRED=%d", dv_max_retired))
+      $display("riscv-dv retired-instruction limit: %0d", dv_max_retired);
+  end
   
   `define LAST_CYCLE 50000
   always @(posedge clk or negedge rst_b)
@@ -208,6 +217,30 @@ module tb();
       cycle_count[31:0] <= 32'b1;
     else 
       cycle_count[31:0] <= cycle_count[31:0] + 1'b1;
+  end
+
+  always @(posedge clk or negedge rst_b)
+  begin
+    if(!rst_b)
+      dv_retired_count[63:0] <= 64'b0;
+    else if((dv_max_retired > 0) &&
+            (dv_retired_count[63:0] >= dv_max_retired))
+    begin
+      $display("*************************************************************");
+      $display("* Error: riscv-dv retired-instruction limit reached: %0d *",
+               dv_max_retired);
+      $display("* Last retire PCs: %h %h %h *",
+               `retire0_pc, `retire1_pc, `retire2_pc);
+      $display("*************************************************************");
+      FILE = $fopen("run_case.report","w");
+      $fwrite(FILE,"TEST FAIL");
+      $finish;
+    end
+    else
+      dv_retired_count[63:0] <= dv_retired_count[63:0] +
+                                (`tb_retire0 ? 64'd1 : 64'd0) +
+                                (`tb_retire1 ? 64'd1 : 64'd0) +
+                                (`tb_retire2 ? 64'd1 : 64'd0);
   end
   
   

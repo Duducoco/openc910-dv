@@ -139,6 +139,16 @@ class C910TestlistTest(unittest.TestCase):
         self.assertIn("+no_load_store=1", options)
         self.assertNotIn("+disable_compressed_instr=1", options)
 
+    def test_load_store_smoke_test_has_bounded_control_flow(self):
+        tests_by_name = {test["test"]: test for test in self.tests}
+        load_store = tests_by_name["c910_load_store_test"]
+        options = load_store["gen_opts"]
+
+        self.assertIn("load_store", load_store["coverage_tags"])
+        self.assertIn("+num_of_sub_program=0", options)
+        self.assertIn("+no_branch_jump=1", options)
+        self.assertNotIn("+no_load_store=1", options)
+
     def test_execution_domains_have_comparable_depth_ladders(self):
         domains = {
             "branch": ("branch_prediction", (200, 1000, 10000)),
@@ -401,6 +411,17 @@ else:
         self.assertIn('$value$plusargs("DV_TOHOST=%h"', testbench)
         self.assertIn("cpu_wdata[31:0] == 32'h1", testbench)
         self.assertNotIn("DV_DONE_PC", makefile + testbench)
+
+    def test_dv_simulation_limits_retired_instructions(self):
+        makefile = MAKEFILE.read_text(encoding="utf-8")
+        testbench = TESTBENCH.read_text(encoding="utf-8")
+
+        self.assertIn("DV_MAX_RETIRED ?= 1000000", makefile)
+        self.assertIn("+DV_MAX_RETIRED=$(DV_MAX_RETIRED)", makefile)
+        self.assertIn('$value$plusargs("DV_MAX_RETIRED=%d"', testbench)
+        self.assertIn("retired-instruction limit", testbench)
+        self.assertIn("`retire0_pc", testbench)
+        self.assertIn('$fwrite(FILE,"TEST FAIL")', testbench)
 
     def test_linker_matches_testbench_memory_capacity(self):
         linker_script = LINKER_SCRIPT.read_text(encoding="utf-8")

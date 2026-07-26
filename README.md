@@ -130,6 +130,8 @@ $ make dv-regress-parallel \
 ```
 
 `DV_TIMEOUT` limits each simulation or report command in seconds.
+`DV_MAX_RETIRED` defaults to 1,000,000 and fails a DV case that keeps retiring
+instructions without reaching `tohost`; override it for intentionally long-running tests.
 The preflight estimates 500 MiB per incomplete case by default; override this
 with `ESTIMATED_CASE_MIB` when measured report sizes differ. Failed or timed-out
 cases remain in `summary.tsv` and are retried by the next non-forced run.
