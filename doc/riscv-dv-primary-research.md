@@ -108,7 +108,8 @@ The current PASS/FAIL writeback detector also has a typo: its third FAIL compari
 
 - Upstream `riscv-dv` currently advertises only `RV32IMAFDC` and `RV64IMAFDC` as supported instruction sets. That is the standard ISA filtering path, not vendor-specific `XThead` support.
 - The documented custom-instruction path is generic and manual: add enum entries in `riscv_custom_instr_enum.sv`, define instructions in `rv32x_instr.sv` / `rv64x_instr.sv`, extend `riscv_custom_instr.sv` to implement `get_instr_name` and `convert2asm`, and add `RV32X` / `RV64X` to `supported_isa` in the target settings.
-- The fork initially contained only custom-instruction scaffolding. The `riscv-dv` submodule now implements all 19 scalar instructions in the C910 performance-extension decoder through the SystemVerilog generator. Custom load/store, cache, and barrier instructions remain excluded until their memory and privilege side effects have a dedicated generation model.
+- The fork initially contained only custom-instruction scaffolding. The `riscv-dv` submodule now implements all 101 RTL-visible C910 private instruction families through the SystemVerilog generator: 19 scalar, 57 private load/store, and 25 cache/synchronization families.
+- Private memory instructions are emitted by a directed stream that reloads a generated data-page base before each operation and uses zero offset, scale, step, and pair displacement. Cache instructions with address operands use the same controlled page; cache and synchronization instructions have their own directed stream.
 - The Python generator has the same gap: `pygen_src/riscv_instr_pkg.py` still says it needs a way to import custom instructions from `isa/custom/riscv_custom_instr_enum.py`. So enabling `RV64X` in the SV target does not automatically make pygen emit vendor custom opcodes.
 - Toolchain and ISS implications: the docs require a RISCV-GCC toolchain and ISS setup, and the flow cross-compares traces with Spike and OVPsim. Inference: if you add XThead instructions, the assembler/toolchain must accept the mnemonics or encodings, and the ISS must decode/execute them, otherwise the co-simulation flow will not be able to validate those tests.
 
@@ -117,8 +118,9 @@ Local toolchain verification:
 - The installed vendor compiler is `Xuantie-900 elf newlib gcc Toolchain V2.0.3 B-20210806`, based on GCC 10.2.0.
 - Its actual path in this workspace is `/home/u1/projects/coverage_predict/openc910/tools/newlib/bin`; the supplied `/home/u1/coverage_predict/...` path is missing the `projects` component.
 - It successfully assembled the complete OpenC910 `ISA_THEAD/isa_thead_smoke.s` with `-march=rv64imafdcxtheadc -mabi=lp64d`. Vendor instructions including `rev` and `ff0` were preserved and recognized by the vendor `objdump`.
-- The C910 target was generated with VCS using seed 1 and 500 instructions. All 19 supported custom-instruction families appeared; the UVM summary reported zero warnings, errors, and fatals.
-- The generated assembly was compiled and converted to binary by the Xuantie GCC/objcopy tools. Disassembly confirmed that the C910-specific startup selected by the target include path sets `MXSTATUS.THEADISAEE` before executing the generated stream.
+- The scalar, private-memory, and cache/synchronization targets were generated with VCS. All 101 custom-instruction families appeared; each generator run reported `TEST PASSED` with zero UVM warnings, errors, and fatals.
+- All three generated assemblies were compiled and converted to binary by the Xuantie GCC/objcopy tools. Disassembly confirmed the private mnemonics and that the C910-specific startup selected by the target include path sets `MXSTATUS.THEADISAEE` before executing the generated stream.
+- These VCS runs simulate the `riscv-dv` UVM generator, not the OpenC910 RTL DUT. Standard ISS builds do not model these vendor instructions, so the target disables ISS comparison. Cache-state correctness still requires C910 RTL monitors or a cache-aware reference model.
 
 Source URLs for this addendum:
 - https://github.com/chipsalliance/riscv-dv/blob/master/docs/source/overview.rst
