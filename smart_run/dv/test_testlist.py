@@ -152,7 +152,39 @@ class C910TestlistTest(unittest.TestCase):
                     else:
                         self.assertEqual(common_options, options_without_count)
 
+    def test_diversity_expansion_reaches_one_hundred_distinct_tests(self):
+        expected_groups = {
+            "integer_control_expansion": 7,
+            "memory_atomic_expansion": 8,
+            "floating_point_expansion": 5,
+            "csr_exception_expansion": 5,
+            "compressed_mixed_expansion": 5,
+            "xthead_expansion": 8,
+        }
+        expanded = [
+            test
+            for test in self.tests
+            if "diversity_expansion" in test.get("coverage_tags", [])
+        ]
+
+        self.assertEqual(100, len(self.tests))
+        self.assertEqual(sum(expected_groups.values()), len(expanded))
+        for group, expected_count in expected_groups.items():
+            with self.subTest(group=group):
+                actual_count = sum(
+                    group in test.get("coverage_tags", []) for test in expanded
+                )
+                self.assertEqual(expected_count, actual_count)
+
+        signatures = {
+            (test["gen_test"], test["gcc_opts"], test["gen_opts"])
+            for test in expanded
+        }
+        self.assertEqual(len(expanded), len(signatures))
+
     def test_names_are_safe_for_run_directories(self):
+        names = [test["test"] for test in self.tests]
+        self.assertEqual(len(names), len(set(names)))
         for test in self.tests:
             with self.subTest(test=test["test"]):
                 self.assertRegex(test["test"], r"^[a-z0-9_]+$")

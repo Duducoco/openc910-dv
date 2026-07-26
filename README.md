@@ -113,6 +113,11 @@ Floating-point behavior remains covered by the feature-oriented tests. Its
 depth ladder is not enabled because the 200-instruction VCS pilot did not
 complete on the current OpenC910 RTL flow.
 
+The C910 list contains 100 tests in total. The diversity expansion adds 38
+focused variants: 7 integer/control-flow, 8 memory/atomic, 5 floating-point,
+5 CSR/exception, 5 compressed/mixed, and 8 XThead tests. Run `make dv-show`
+to list their exact names.
+
 The flow can also be run in separate stages when debugging generation or
 linking. `dv-buildcase` expects the source produced by `dv-generate` for the
 same test and seed.
