@@ -40,6 +40,7 @@ DV_BUILD_DIR = $(WORK_ROOT)/build/dv/$(DV_TARGET)
 DV_RUN_DIR = $(WORK_ROOT)/runs/$(DV_CASE)
 DV_GEN_DIR = $(DV_RUN_DIR)/.dv-gen
 DV_SOURCE = $(DV_RUN_DIR)/$(DV_TEST)_seed_$(SEED).S
+DV_TOHOST_HEX ?= 01ffffe0
 BUILD_KEY = $(if $(filter $(CASE),debug_gpr debug_memory plic_int sleep),$(CASE),default)
 BUILD_DIR = $(WORK_ROOT)/build/$(BUILD_KEY)
 RUN_DIR = $(WORK_ROOT)/runs/$(if $(strip $(CASE)),$(CASE),compile)
@@ -322,8 +323,12 @@ check-dv-args:
 dv-compile:
 	@mkdir -p "$(DV_BUILD_DIR)"
 	@current_config=$$(cat "$(DV_BUILD_DIR)/.build-config" 2>/dev/null || true); \
-	dv_diff_hash=$$(git -C "$(DV_ROOT)" diff --no-ext-diff | sha256sum | cut -d' ' -f1); \
-	wanted_config="DV_COMMIT=$$(git -C "$(DV_ROOT)" rev-parse HEAD) DV_DIFF=$$dv_diff_hash TARGET=$(DV_TARGET)"; \
+	dv_source_hash=$$({ \
+	  find "$(DV_ROOT)/src" "$(DV_ROOT)/target/$(DV_TARGET)" \
+	    "$(DV_ROOT)/user_extension" "$(DV_ROOT)/yaml" -type f -print0; \
+	  printf '%s\0' "$(DV_ROOT)/run.py"; \
+	} | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1); \
+	wanted_config="DV_COMMIT=$$(git -C "$(DV_ROOT)" rev-parse HEAD) DV_SOURCE=$$dv_source_hash TARGET=$(DV_TARGET)"; \
 	if [ "$(REBUILD)" = "on" ] || [ ! -x "$(DV_BUILD_DIR)/vcs_simv" ] || [ "$$current_config" != "$$wanted_config" ]; then \
 	  rm -rf "$(DV_BUILD_DIR)/vcs_simv" "$(DV_BUILD_DIR)/vcs_simv.daidir" "$(DV_BUILD_DIR)/vcs_simv.csrc"; \
 	  cd "$(DV_ROOT)" && python3 run.py \
@@ -357,10 +362,12 @@ dv-buildcase: check-dv-args tool-chain-chk
 	  -static -mcmodel=medany -fvisibility=hidden -nostdlib -nostartfiles \
 	  -I"$(DV_ROOT)/target/$(DV_TARGET)" -I"$(DV_ROOT)/user_extension" \
 	  -T"$(abspath ./dv/c910.ld)" -march=rv64imafdcxtheadc -mabi=lp64d \
+	  -Wl,--defsym=tohost=0x$(DV_TOHOST_HEX) \
 	  "$(notdir $(DV_SOURCE))" -o dv_test.elf
 	@cd "$(DV_RUN_DIR)" && "$(TOOL_EXTENSION)/riscv64-unknown-elf-nm" dv_test.elf | \
-	  awk '$$3 == "write_tohost" { print substr($$1, length($$1) - 9) }' > dv_done.pc
-	@test -s "$(DV_RUN_DIR)/dv_done.pc" || { echo "Generated ELF has no write_tohost symbol" >&2; exit 2; }
+	  awk '$$3 == "tohost" { print substr($$1, length($$1) - 7) }' > dv_tohost.addr
+	@test "$$(cat "$(DV_RUN_DIR)/dv_tohost.addr")" = "$(DV_TOHOST_HEX)" || { \
+	  echo "Generated ELF has an unexpected tohost address" >&2; exit 2; }
 	@cd "$(DV_RUN_DIR)" && "$(TOOL_EXTENSION)/riscv64-unknown-elf-objcopy" \
 	  -O srec dv_test.elf inst.hex -j .text -j .rodata
 	@cd "$(DV_RUN_DIR)" && "$(TOOL_EXTENSION)/riscv64-unknown-elf-objcopy" \
@@ -374,17 +381,16 @@ dv-runcase: check-dv-args
 	@$(MAKE) -s dv-buildcase DV_TEST="$(DV_TEST)" SEED="$(SEED)"
 	@rm -rf "$(DV_RUN_DIR)/$(COV_DIR)"
 	@cp -a "$(WORK_ROOT)/build/default/$(COV_DIR)" "$(DV_RUN_DIR)/$(COV_DIR)"
-	@done_pc=$$(cat "$(DV_RUN_DIR)/dv_done.pc"); \
-	  cd "$(DV_RUN_DIR)" && "$(abspath $(WORK_ROOT)/build/default)/simv" \
-	    -l run.vcs.log -cm $(COV_METRICS) -cm_dir $(COV_DIR) +DV_DONE_PC=$$done_pc
+	@cd "$(DV_RUN_DIR)" && "$(abspath $(WORK_ROOT)/build/default)/simv" \
+	  -l run.vcs.log -cm $(COV_METRICS) -cm_dir $(COV_DIR) \
+	  +DV_TOHOST=$(DV_TOHOST_HEX)
 	@test "$$(cat "$(DV_RUN_DIR)/run_case.report" 2>/dev/null)" = "TEST PASS" || { \
 	  echo "riscv-dv case failed: $(DV_CASE)" >&2; exit 1; }
-	@done_pc=$$(cat "$(DV_RUN_DIR)/dv_done.pc"); \
-	  printf '%s\n' \
+	@printf '%s\n' \
 	    'CASE=$(DV_CASE)' \
 	    'DV_TEST=$(DV_TEST)' \
 	    'SEED=$(SEED)' \
-	    "DV_DONE_PC=$$done_pc" \
+	    'DV_TOHOST=0x$(DV_TOHOST_HEX)' \
 	    "OPENC910_COMMIT=$$(git rev-parse HEAD)" \
 	    "RISCV_DV_COMMIT=$$(git -C "$(DV_ROOT)" rev-parse HEAD)" \
 	    > "$(DV_RUN_DIR)/run.meta"
@@ -392,7 +398,7 @@ dv-runcase: check-dv-args
 	@rm -rf "$(DV_GEN_DIR)" "$(DV_RUN_DIR)/dv_test.elf" \
 	  "$(DV_RUN_DIR)/inst.hex" "$(DV_RUN_DIR)/data.hex" \
 	  "$(DV_RUN_DIR)/inst.pat" "$(DV_RUN_DIR)/data.pat" \
-	  "$(DV_RUN_DIR)/dv_done.pc" "$(DV_RUN_DIR)/cm.log" \
+	  "$(DV_RUN_DIR)/dv_tohost.addr" "$(DV_RUN_DIR)/cm.log" \
 	  "$(DV_RUN_DIR)/ucli.key"
 
 dv-regress:

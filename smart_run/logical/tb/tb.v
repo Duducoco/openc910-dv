@@ -240,15 +240,16 @@ module tb();
   reg [3:0]  cpu_awlen;
   reg [15:0] cpu_wstrb;
   reg        cpu_wvalid;
+  reg [127:0] cpu_wdata;
   reg [63:0] value0;
   reg [63:0] value1;
   reg [63:0] value2;
-  reg        dv_done_en;
-  reg [39:0] dv_done_pc;
+  reg        dv_tohost_en;
+  reg [31:0] dv_tohost_addr;
 
   initial
   begin
-    dv_done_en = $value$plusargs("DV_DONE_PC=%h", dv_done_pc);
+    dv_tohost_en = $value$plusargs("DV_TOHOST=%h", dv_tohost_addr);
   end
   
   
@@ -258,6 +259,7 @@ module tb();
     cpu_awaddr[31:0] <= `SOC_TOP.x_axi_slave128.mem_addr[31:0];
     cpu_wvalid       <= `SOC_TOP.biu_pad_wvalid;
     cpu_wstrb        <= `SOC_TOP.biu_pad_wstrb;
+    cpu_wdata        <= `SOC_TOP.biu_pad_wdata;
     // value0           <= `CPU_TOP.core0_pad_wb0_data[63:0];
     // value1           <= `CPU_TOP.core0_pad_wb1_data[63:0];
     // value2           <= `CPU_TOP.core0_pad_wb2_data[63:0];
@@ -291,18 +293,31 @@ module tb();
        $finish;
     end
 
-    else if(dv_done_en &&
-            ((`tb_retire0 && (`retire0_pc == dv_done_pc)) ||
-             (`tb_retire1 && (`retire1_pc == dv_done_pc)) ||
-             (`tb_retire2 && (`retire2_pc == dv_done_pc))))
+    else if(dv_tohost_en &&
+            (cpu_awlen[3:0] == 4'b0) &&
+            (cpu_awaddr[31:0] == dv_tohost_addr) &&
+            cpu_wvalid && (cpu_wstrb[15:0] == 16'h000f) && `clk_en)
     begin
-      $display("**********************************************");
-      $display("*    riscv-dv simulation finished successfully *");
-      $display("**********************************************");
-      #10;
-      FILE = $fopen("run_case.report","w");
-      $fwrite(FILE,"TEST PASS");
-      $finish;
+      if(cpu_wdata[31:0] == 32'h1)
+      begin
+        $display("**********************************************");
+        $display("*    riscv-dv simulation finished successfully *");
+        $display("**********************************************");
+        #10;
+        FILE = $fopen("run_case.report","w");
+        $fwrite(FILE,"TEST PASS");
+        $finish;
+      end
+      else
+      begin
+        $display("**********************************************");
+        $display("*    riscv-dv reported failure: tohost=%h *", cpu_wdata[31:0]);
+        $display("**********************************************");
+        #10;
+        FILE = $fopen("run_case.report","w");
+        $fwrite(FILE,"TEST FAIL");
+        $finish;
+      end
     end
 
     else if((cpu_awlen[3:0] == 4'b0) &&

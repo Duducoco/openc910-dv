@@ -9,6 +9,9 @@ import yaml
 
 TESTLIST = pathlib.Path(__file__).parents[2] / "riscv-dv/target/c910/testlist.yaml"
 SMART_RUN = pathlib.Path(__file__).parents[1]
+MAKEFILE = SMART_RUN / "Makefile"
+LINKER_SCRIPT = SMART_RUN / "dv/c910.ld"
+TESTBENCH = SMART_RUN / "logical/tb/tb.v"
 
 
 class C910TestlistTest(unittest.TestCase):
@@ -82,6 +85,24 @@ class C910TestlistTest(unittest.TestCase):
             text=True,
         )
         self.assertIn("dv-runcase DV_TEST=[test] SEED=[seed]", result.stdout)
+
+    def test_dv_completion_uses_tohost_bus_write(self):
+        makefile = MAKEFILE.read_text(encoding="utf-8")
+        testbench = TESTBENCH.read_text(encoding="utf-8")
+
+        self.assertIn("--defsym=tohost=0x$(DV_TOHOST_HEX)", makefile)
+        self.assertIn('+DV_TOHOST=$(DV_TOHOST_HEX)', makefile)
+        self.assertIn('$value$plusargs("DV_TOHOST=%h"', testbench)
+        self.assertIn("cpu_wdata[31:0] == 32'h1", testbench)
+        self.assertNotIn("DV_DONE_PC", makefile + testbench)
+
+    def test_linker_matches_testbench_memory_capacity(self):
+        linker_script = LINKER_SCRIPT.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "DMEM (rwx) : ORIGIN = 0x00040000, LENGTH = 0x00040000",
+            linker_script,
+        )
 
 
 if __name__ == "__main__":
