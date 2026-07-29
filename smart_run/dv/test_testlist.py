@@ -8,6 +8,8 @@ import unittest
 
 import yaml
 
+from smart_run.dv.parallel_regress import load_tests as load_dv_tests
+
 
 TESTLIST = pathlib.Path(__file__).parents[2] / "riscv-dv/target/c910/testlist.yaml"
 SMART_RUN = pathlib.Path(__file__).parents[1]
@@ -139,15 +141,61 @@ class C910TestlistTest(unittest.TestCase):
         self.assertIn("+no_load_store=1", options)
         self.assertNotIn("+disable_compressed_instr=1", options)
 
+    def test_encoding_smoke_tests_have_bounded_control_flow(self):
+        tests_by_name = {test["test"]: test for test in self.tests}
+        for name in (
+            "c910_non_compressed_instr_test",
+            "c910_hint_instr_test",
+        ):
+            with self.subTest(test=name):
+                options = tests_by_name[name]["gen_opts"]
+
+                self.assertIn("+num_of_sub_program=0", options)
+                self.assertIn("+no_branch_jump=1", options)
+
     def test_load_store_smoke_test_has_bounded_control_flow(self):
         tests_by_name = {test["test"]: test for test in self.tests}
-        load_store = tests_by_name["c910_load_store_test"]
-        options = load_store["gen_opts"]
+        for name in (
+            "c910_load_store_test",
+            "c910_load_store_hazard_test",
+            "c910_unaligned_load_store_test",
+        ):
+            with self.subTest(test=name):
+                load_store = tests_by_name[name]
+                options = load_store["gen_opts"]
 
-        self.assertIn("load_store", load_store["coverage_tags"])
+                self.assertIn("load_store", load_store["coverage_tags"])
+                self.assertIn("+num_of_sub_program=0", options)
+                self.assertIn("+no_branch_jump=1", options)
+                self.assertNotIn("+no_load_store=1", options)
+
+    def test_branch_smoke_test_has_bounded_call_stack(self):
+        tests_by_name = {test["test"]: test for test in self.tests}
+        branch = tests_by_name["c910_branch_jump_test"]
+        options = branch["gen_opts"]
+
+        self.assertIn("branch_prediction", branch["coverage_tags"])
         self.assertIn("+num_of_sub_program=0", options)
-        self.assertIn("+no_branch_jump=1", options)
-        self.assertNotIn("+no_load_store=1", options)
+        self.assertIn("+directed_instr_0=riscv_jal_instr,20", options)
+        self.assertIn("+directed_instr_1=riscv_loop_instr,20", options)
+
+    def test_atomic_tests_have_bounded_runtime(self):
+        atomic_tests = [
+            test
+            for test in self.tests
+            if "atomic" in test.get("coverage_tags", [])
+        ]
+
+        self.assertGreaterEqual(len(atomic_tests), 3)
+        for test in atomic_tests:
+            with self.subTest(test=test["test"]):
+                options = test["gen_opts"]
+                count = re.search(r"\+instr_cnt=(\d+)", options)
+                self.assertIsNotNone(count)
+                self.assertLessEqual(int(count.group(1)), 1500)
+                self.assertIn("+num_of_sub_program=0", options)
+                self.assertIn("+no_branch_jump=1", options)
+                self.assertIn("+no_fence=1", options)
 
     def test_execution_domains_have_comparable_depth_ladders(self):
         domains = {
@@ -259,6 +307,113 @@ class C910TestlistTest(unittest.TestCase):
         self.assertIn("Simulation jobs: 50", result.stdout)
         self.assertIn("Report jobs: 8", result.stdout)
         self.assertIn("Stage timeout: 600s", result.stdout)
+        self.assertIn("Resource-intensive jobs: 8", result.stdout)
+        self.assertIn("Resource-intensive timeout: 1200s", result.stdout)
+
+    def test_parallel_regression_limits_resource_intensive_tests(self):
+        with tempfile.TemporaryDirectory() as work_root:
+            work_root = pathlib.Path(work_root)
+            helper = work_root / "fake_make.py"
+            helper.write_text(
+                """#!/usr/bin/env python3
+import pathlib
+import sys
+import time
+
+work_root = pathlib.Path(sys.argv[sys.argv.index("--work-root") + 1])
+target = next(
+    arg for arg in sys.argv if arg in ("dv-preflight", "dv-simcase", "dv-reportcase")
+)
+values = dict(arg.split("=", 1) for arg in sys.argv if "=" in arg)
+if target == "dv-preflight":
+    raise SystemExit(0)
+
+test = values["DV_TEST"]
+seed = int(values["SEED"])
+case = f"dv_{test}_seed_{seed}"
+run_dir = work_root / "runs" / case
+run_dir.mkdir(parents=True, exist_ok=True)
+
+if target == "dv-simcase":
+    (work_root / f"{case}.start").write_text(str(time.monotonic_ns()))
+    intensive = "atomic" in test or "hint_instr" in test
+    time.sleep(1.2 if intensive else 0.1)
+    (work_root / f"{case}.end").write_text(str(time.monotonic_ns()))
+    (run_dir / f"{test}_seed_{seed}.S").write_text("", encoding="utf-8")
+    (run_dir / "coverage.vdb").mkdir(exist_ok=True)
+    (run_dir / "run_case.report").write_text("TEST PASS\\n", encoding="utf-8")
+else:
+    (run_dir / "coverage_report").mkdir(exist_ok=True)
+    (run_dir / "coverage_report/dashboard.html").write_text("", encoding="utf-8")
+""",
+                encoding="utf-8",
+            )
+            make_command = f"python3 {helper} --work-root {work_root}"
+            result = subprocess.run(
+                [
+                    "make",
+                    "-s",
+                    "dv-regress-parallel",
+                    "DV_TESTS=c910_atomic_test c910_hint_instr_test c910_integer_depth_200_test",
+                    "RUNS_PER_TEST=2",
+                    "JOBS=4",
+                    "DV_INTENSIVE_JOBS=2",
+                    "DV_TIMEOUT=1",
+                    "DV_INTENSIVE_TIMEOUT=3",
+                    "REPORT_JOBS=1",
+                    "ESTIMATED_CASE_MIB=1",
+                    f"WORK_ROOT={work_root}",
+                    f"REGRESS_ROOT={work_root}/regress",
+                    f"WORKER_MAKE={make_command}",
+                ],
+                cwd=SMART_RUN,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+
+            intervals = []
+            intensive_starts = list(
+                work_root.glob("dv_c910_atomic_test_seed_*.start")
+            ) + list(
+                work_root.glob("dv_c910_hint_instr_test_seed_*.start")
+            )
+            for start_path in intensive_starts:
+                end_path = start_path.with_suffix(".end")
+                intervals.append(
+                    (int(start_path.read_text()), int(end_path.read_text()))
+                )
+            self.assertEqual(4, len(intervals))
+            max_parallel = max(
+                sum(start <= point < end for start, end in intervals)
+                for interval in intervals
+                for point in interval
+            )
+            self.assertLessEqual(max_parallel, 2)
+
+    def test_dv_generator_runtime_database_is_case_local(self):
+        makefile = MAKEFILE.read_text(encoding="utf-8")
+
+        self.assertIn(
+            'cp -a --reflink=auto "$(DV_BUILD_DIR)/vcs_simv.daidir" '
+            '"$(DV_GEN_DIR)/vcs_simv.daidir"',
+            makefile,
+        )
+        self.assertNotIn(
+            'ln -s "$(abspath $(DV_BUILD_DIR))/vcs_simv.daidir"',
+            makefile,
+        )
+
+    def test_long_or_multi_subprogram_tests_are_resource_intensive(self):
+        selected = (
+            "c910_non_compressed_instr_test "
+            "c910_hint_instr_test "
+            "c910_jump_call_return_stress_test "
+            "c910_loop_stress_test"
+        )
+        requested, intensive = load_dv_tests(TESTLIST, selected)
+
+        self.assertEqual(set(requested), intensive)
 
     def test_parallel_regression_writes_reproducible_manifest(self):
         with tempfile.TemporaryDirectory() as regress_root:

@@ -45,9 +45,11 @@ DV_MAX_RETIRED ?= 1000000
 DV_TESTS ?= all
 RUNS_PER_TEST ?= 50
 JOBS ?= 50
+DV_INTENSIVE_JOBS ?= 8
 REPORT_JOBS ?= 8
 SEED_BASE ?= 1
 DV_TIMEOUT ?= 600
+DV_INTENSIVE_TIMEOUT ?= 1200
 ESTIMATED_CASE_MIB ?= 500
 DRY_RUN ?= off
 FORCE ?= off
@@ -375,7 +377,7 @@ dv-generate: $(DV_GENERATE_DEPS)
 	@mkdir -p "$(DV_GEN_DIR)"
 	@ln -s "$(abspath $(DV_BUILD_DIR))/vcs_simv" "$(DV_GEN_DIR)/vcs_simv"
 	@if [ -d "$(DV_BUILD_DIR)/vcs_simv.daidir" ]; then \
-	  ln -s "$(abspath $(DV_BUILD_DIR))/vcs_simv.daidir" "$(DV_GEN_DIR)/vcs_simv.daidir"; \
+	  cp -a --reflink=auto "$(DV_BUILD_DIR)/vcs_simv.daidir" "$(DV_GEN_DIR)/vcs_simv.daidir"; \
 	fi
 	@cd "$(DV_ROOT)" && python3 run.py \
 	  --custom_target "target/$(DV_TARGET)" \
@@ -460,9 +462,11 @@ dv-regress-parallel:
 	  --tests "$(DV_TESTS)" \
 	  --runs-per-test "$(RUNS_PER_TEST)" \
 	  --jobs "$(JOBS)" \
+	  --intensive-jobs "$(DV_INTENSIVE_JOBS)" \
 	  --report-jobs "$(REPORT_JOBS)" \
 	  --seed-base "$(SEED_BASE)" \
 	  --timeout "$(DV_TIMEOUT)" \
+	  --intensive-timeout "$(DV_INTENSIVE_TIMEOUT)" \
 	  --estimated-case-mib "$(ESTIMATED_CASE_MIB)" \
 	  --work-root "$(abspath $(WORK_ROOT))" \
 	  --regress-root "$(abspath $(REGRESS_ROOT))" \
@@ -524,7 +528,9 @@ help:
 	@echo "    THREADS=                        : Verilator thread count"
 	@echo "    RUNS_PER_TEST=                  : parallel runs per DV test (default: 50)"
 	@echo "    JOBS= / REPORT_JOBS=            : simulation/report concurrency (defaults: 50/8)"
-	@echo "    SEED_BASE= / DV_TIMEOUT=         : first seed and per-stage timeout in seconds"
+	@echo "    DV_INTENSIVE_JOBS=              : concurrency for long/resource-intensive tests (default: 8)"
+	@echo "    SEED_BASE= / DV_TIMEOUT=         : first seed and normal stage timeout in seconds"
+	@echo "    DV_INTENSIVE_TIMEOUT=           : resource-intensive simulation timeout (default: 1200)"
 	@echo "    DV_MAX_RETIRED=                  : maximum retired instructions per DV case (default: 1000000)"
 	@echo "    DRY_RUN=on                      : write and display the parallel plan only"
 	@echo "    FORCE=on                        : rerun complete test+seed cases"

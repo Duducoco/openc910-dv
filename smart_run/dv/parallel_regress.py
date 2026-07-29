@@ -7,6 +7,7 @@ import dataclasses
 import hashlib
 import os
 import pathlib
+import re
 import shlex
 import shutil
 import signal
@@ -19,6 +20,16 @@ import yaml
 
 
 MAX_SEED = 2_147_483_647
+RESOURCE_INTENSIVE_TAGS = frozenset(
+    {
+        "atomic",
+        "cache",
+        "floating_point",
+        "load_store",
+        "synchronization",
+        "xthead_memory",
+    }
+)
 SMART_RUN = pathlib.Path(__file__).resolve().parents[1]
 ACTIVE_PROCESSES = set()
 ACTIVE_LOCK = threading.Lock()
@@ -30,6 +41,7 @@ class Case:
     test: str
     seed: int
     name: str
+    intensive: bool
 
 
 @dataclasses.dataclass(frozen=True)
@@ -53,9 +65,11 @@ def parse_args():
     parser.add_argument("--tests", default="all")
     parser.add_argument("--runs-per-test", type=positive_int, default=50)
     parser.add_argument("--jobs", type=positive_int, default=50)
+    parser.add_argument("--intensive-jobs", type=positive_int, default=8)
     parser.add_argument("--report-jobs", type=positive_int, default=8)
     parser.add_argument("--seed-base", type=positive_int, default=1)
     parser.add_argument("--timeout", type=positive_int, default=600)
+    parser.add_argument("--intensive-timeout", type=positive_int, default=1200)
     parser.add_argument("--estimated-case-mib", type=positive_int, default=500)
     parser.add_argument("--work-root", type=pathlib.Path, required=True)
     parser.add_argument("--regress-root", type=pathlib.Path, required=True)
@@ -66,14 +80,35 @@ def parse_args():
 
 
 def load_tests(testlist, selection):
-    configured = [entry["test"] for entry in yaml.safe_load(testlist.read_text())]
+    entries = yaml.safe_load(testlist.read_text())
+    configured = [entry["test"] for entry in entries]
     requested = configured if selection.strip() in ("", "all") else selection.split()
     unknown = sorted(set(requested) - set(configured))
     if unknown:
         raise ValueError("unknown tests: " + ", ".join(unknown))
     if len(requested) != len(set(requested)):
         raise ValueError("test selection contains duplicates")
-    return requested
+    intensive = {
+        entry["test"]
+        for entry in entries
+        if entry["test"] in requested and is_resource_intensive(entry)
+    }
+    return requested, intensive
+
+
+def option_value(options, name, default=0):
+    match = re.search(rf"(?:^|\s)\+{re.escape(name)}=(\d+)(?:\s|$)", options)
+    return int(match.group(1)) if match else default
+
+
+def is_resource_intensive(entry):
+    tags = set(entry.get("coverage_tags", []))
+    options = entry.get("gen_opts", "")
+    return (
+        bool(RESOURCE_INTENSIVE_TAGS.intersection(tags))
+        or option_value(options, "instr_cnt") >= 4000
+        or option_value(options, "num_of_sub_program") >= 2
+    )
 
 
 def case_state(case, work_root):
@@ -109,7 +144,7 @@ def request_stop(_signum=None, _frame=None):
         terminate_process(process)
 
 
-def run_make(case, target, args, log_path):
+def run_make(case, target, args, log_path, timeout=None):
     if STOP_REQUESTED.is_set():
         return CommandResult(case, 130, 0.0, "cancelled")
 
@@ -142,13 +177,14 @@ def run_make(case, target, args, log_path):
         with ACTIVE_LOCK:
             ACTIVE_PROCESSES.add(process)
         try:
-            process.wait(timeout=args.timeout)
+            stage_timeout = timeout if timeout is not None else args.timeout
+            process.wait(timeout=stage_timeout)
             returncode = process.returncode
             detail = "pass" if returncode == 0 else f"exit {returncode}"
         except subprocess.TimeoutExpired:
             terminate_process(process)
             returncode = 124
-            detail = f"timeout after {args.timeout}s"
+            detail = f"timeout after {stage_timeout}s"
         finally:
             with ACTIVE_LOCK:
                 ACTIVE_PROCESSES.discard(process)
@@ -163,13 +199,23 @@ def future_result(future, case):
         return CommandResult(case, 1, 0.0, f"worker failed: {error}")
 
 
-def submit_case(executor, case, target, log_suffix, args, batch_dir):
+def run_make_limited(slots, case, target, args, log_path, timeout):
+    with slots:
+        return run_make(case, target, args, log_path, timeout)
+
+
+def submit_case(
+    executor, case, target, log_suffix, args, batch_dir, slots=None, timeout=None
+):
+    runner = run_make_limited if slots is not None else run_make
+    runner_args = (slots, case) if slots is not None else (case,)
     return executor.submit(
-        run_make,
-        case,
+        runner,
+        *runner_args,
         target,
         args,
         batch_dir / "logs" / f"{case.name}.{log_suffix}.log",
+        timeout,
     )
 
 
@@ -178,14 +224,24 @@ def run_pipeline(simulation_cases, report_cases, statuses, args, batch_dir):
     simulation_completed = 0
     report_completed = 0
 
+    simulation_slots = threading.BoundedSemaphore(args.jobs)
     with concurrent.futures.ThreadPoolExecutor(
         max_workers=args.jobs
     ) as simulation_executor, concurrent.futures.ThreadPoolExecutor(
+        max_workers=min(args.intensive_jobs, args.jobs)
+    ) as intensive_executor, concurrent.futures.ThreadPoolExecutor(
         max_workers=args.report_jobs
     ) as report_executor:
         simulation_futures = {
             submit_case(
-                simulation_executor, case, "dv-simcase", "sim", args, batch_dir
+                intensive_executor if case.intensive else simulation_executor,
+                case,
+                "dv-simcase",
+                "sim",
+                args,
+                batch_dir,
+                simulation_slots,
+                args.intensive_timeout if case.intensive else args.timeout,
             ): case
             for case in simulation_cases
         }
@@ -255,7 +311,7 @@ def main():
     args = parse_args()
     args.work_root.mkdir(parents=True, exist_ok=True)
     try:
-        tests = load_tests(args.testlist, args.tests)
+        tests, intensive_tests = load_tests(args.testlist, args.tests)
     except (OSError, ValueError, yaml.YAMLError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
@@ -271,7 +327,14 @@ def main():
         first_seed = args.seed_base + test_index * args.runs_per_test
         for iteration in range(args.runs_per_test):
             seed = first_seed + iteration
-            cases.append(Case(test, seed, f"dv_{test}_seed_{seed}"))
+            cases.append(
+                Case(
+                    test,
+                    seed,
+                    f"dv_{test}_seed_{seed}",
+                    test in intensive_tests,
+                )
+            )
 
     selection_hash = hashlib.sha256("\n".join(tests).encode()).hexdigest()[:12]
     batch_name = (
@@ -290,8 +353,10 @@ def main():
     print(f"Planned cases: {case_count}")
     print(f"Seed range: {args.seed_base}..{last_seed}")
     print(f"Simulation jobs: {args.jobs}")
+    print(f"Resource-intensive jobs: {min(args.intensive_jobs, args.jobs)}")
     print(f"Report jobs: {args.report_jobs}")
     print(f"Stage timeout: {args.timeout}s")
+    print(f"Resource-intensive timeout: {args.intensive_timeout}s")
     print(f"Manifest: {manifest.resolve()}")
 
     states = {case.name: case_state(case, args.work_root) for case in cases}

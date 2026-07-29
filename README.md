@@ -94,9 +94,11 @@ $ make dv-regress-parallel \
     DV_TESTS=all \
     RUNS_PER_TEST=50 \
     JOBS=50 \
+    DV_INTENSIVE_JOBS=8 \
     REPORT_JOBS=8 \
     SEED_BASE=1 \
-    DV_TIMEOUT=600
+    DV_TIMEOUT=600 \
+    DV_INTENSIVE_TIMEOUT=1200
 ```
 
 The seed for test index `i` and run index `j` is
@@ -129,7 +131,14 @@ $ make dv-regress-parallel \
     FORCE=on
 ```
 
-`DV_TIMEOUT` limits each simulation or report command in seconds.
+`DV_TIMEOUT` limits each normal simulation or report command in seconds. Tests
+tagged for atomic, load/store, floating-point, cache, synchronization, or
+XThead memory coverage are resource-intensive. Long tests with at least 4,000
+instructions and tests with at least two generated subprograms are classified
+the same way automatically. The runner limits these tests to
+`DV_INTENSIVE_JOBS` concurrent simulations and applies `DV_INTENSIVE_TIMEOUT`
+instead. The defaults are 8 jobs and 1,200 seconds, while the global `JOBS=50`
+limit still applies to all simulations combined.
 `DV_MAX_RETIRED` defaults to 1,000,000 and fails a DV case that keeps retiring
 instructions without reaching `tohost`; override it for intentionally long-running tests.
 The preflight estimates 500 MiB per incomplete case by default; override this
