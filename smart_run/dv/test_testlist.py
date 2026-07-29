@@ -159,6 +159,7 @@ class C910TestlistTest(unittest.TestCase):
             "c910_load_store_test",
             "c910_load_store_hazard_test",
             "c910_unaligned_load_store_test",
+            "c910_floating_load_store_test",
         ):
             with self.subTest(test=name):
                 load_store = tests_by_name[name]
