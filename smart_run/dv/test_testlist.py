@@ -201,14 +201,28 @@ class C910TestlistTest(unittest.TestCase):
     def test_call_return_stress_has_bounded_background_control_flow(self):
         tests_by_name = {test["test"]: test for test in self.tests}
         options = tests_by_name["c910_jump_call_return_stress_test"]["gen_opts"]
+        instruction_count = re.search(r"\+instr_cnt=(\d+)", options)
         subprogram_count = re.search(r"\+num_of_sub_program=(\d+)", options)
 
+        self.assertIsNotNone(instruction_count)
+        self.assertLessEqual(int(instruction_count.group(1)), 3000)
         self.assertIsNotNone(subprogram_count)
         self.assertGreater(int(subprogram_count.group(1)), 0)
-        self.assertLessEqual(int(subprogram_count.group(1)), 6)
+        self.assertLessEqual(int(subprogram_count.group(1)), 2)
         self.assertNotIn("riscv_jal_instr", options)
         self.assertIn("+no_branch_jump=1", options)
         self.assertNotIn("+disable_compressed_instr=1", options)
+
+    def test_loop_stress_has_bounded_background_control_flow(self):
+        tests_by_name = {test["test"]: test for test in self.tests}
+        options = tests_by_name["c910_loop_stress_test"]["gen_opts"]
+        instruction_count = re.search(r"\+instr_cnt=(\d+)", options)
+
+        self.assertIsNotNone(instruction_count)
+        self.assertLessEqual(int(instruction_count.group(1)), 3000)
+        self.assertIn("+num_of_sub_program=0", options)
+        self.assertIn("+no_branch_jump=1", options)
+        self.assertIn("+directed_instr_0=riscv_loop_instr,50", options)
 
     def test_branch_smoke_test_has_bounded_call_stack(self):
         tests_by_name = {test["test"]: test for test in self.tests}
@@ -445,7 +459,7 @@ else:
             makefile,
         )
 
-    def test_long_or_multi_subprogram_tests_are_resource_intensive(self):
+    def test_long_multi_subprogram_or_explicit_tests_are_resource_intensive(self):
         selected = (
             "c910_non_compressed_instr_test "
             "c910_hint_instr_test "
@@ -454,6 +468,11 @@ else:
         )
         requested, intensive = load_dv_tests(TESTLIST, selected)
 
+        tests_by_name = {test["test"]: test for test in self.tests}
+        self.assertIs(
+            tests_by_name["c910_loop_stress_test"]["resource_intensive"],
+            True,
+        )
         self.assertEqual(set(requested), intensive)
 
     def test_parallel_regression_writes_reproducible_manifest(self):

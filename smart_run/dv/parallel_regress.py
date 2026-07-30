@@ -105,7 +105,8 @@ def is_resource_intensive(entry):
     tags = set(entry.get("coverage_tags", []))
     options = entry.get("gen_opts", "")
     return (
-        bool(RESOURCE_INTENSIVE_TAGS.intersection(tags))
+        bool(entry.get("resource_intensive", False))
+        or bool(RESOURCE_INTENSIVE_TAGS.intersection(tags))
         or option_value(options, "instr_cnt") >= 4000
         or option_value(options, "num_of_sub_program") >= 2
     )
