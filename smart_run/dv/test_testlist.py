@@ -245,6 +245,19 @@ class C910TestlistTest(unittest.TestCase):
             options,
         )
 
+    def test_multi_page_memory_excludes_background_fences(self):
+        tests_by_name = {test["test"]: test for test in self.tests}
+        multi_page = tests_by_name["c910_multi_page_memory_test"]
+        options = multi_page["gen_opts"]
+
+        self.assertIn("multi_page_memory", multi_page["coverage_tags"])
+        self.assertIn("+no_fence=1", options)
+        self.assertNotIn("+no_load_store=1", options)
+        self.assertIn(
+            "+directed_instr_0=riscv_multi_page_load_store_instr_stream,50",
+            options,
+        )
+
     def test_loop_stress_has_bounded_background_control_flow(self):
         tests_by_name = {test["test"]: test for test in self.tests}
         options = tests_by_name["c910_loop_stress_test"]["gen_opts"]
