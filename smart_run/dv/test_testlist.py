@@ -141,6 +141,16 @@ class C910TestlistTest(unittest.TestCase):
         self.assertIn("+no_load_store=1", options)
         self.assertNotIn("+disable_compressed_instr=1", options)
 
+    def test_compressed_short_mix_has_no_subprogram_calls(self):
+        tests_by_name = {test["test"]: test for test in self.tests}
+        compressed = tests_by_name["c910_compressed_short_mix_test"]
+        options = compressed["gen_opts"]
+
+        self.assertIn("compressed", compressed["coverage_tags"])
+        self.assertIn("+march=RV32I,RV64I,RV32C,RV64C", options)
+        self.assertIn("+num_of_sub_program=0", options)
+        self.assertNotIn("+disable_compressed_instr=1", options)
+
     def test_encoding_smoke_tests_have_bounded_control_flow(self):
         tests_by_name = {test["test"]: test for test in self.tests}
         for name in (
@@ -219,7 +229,21 @@ class C910TestlistTest(unittest.TestCase):
         self.assertLessEqual(int(subprogram_count.group(1)), 2)
         self.assertNotIn("riscv_jal_instr", options)
         self.assertIn("+no_branch_jump=1", options)
-        self.assertNotIn("+disable_compressed_instr=1", options)
+        self.assertIn("+disable_compressed_instr=1", options)
+
+    def test_back_to_back_load_store_has_bounded_control_flow(self):
+        tests_by_name = {test["test"]: test for test in self.tests}
+        load_store = tests_by_name["c910_back_to_back_load_store_test"]
+        options = load_store["gen_opts"]
+
+        self.assertIn("back_to_back_load_store", load_store["coverage_tags"])
+        self.assertIn("+num_of_sub_program=0", options)
+        self.assertIn("+no_branch_jump=1", options)
+        self.assertNotIn("+no_load_store=1", options)
+        self.assertIn(
+            "+directed_instr_0=riscv_load_store_stress_instr_stream,60",
+            options,
+        )
 
     def test_loop_stress_has_bounded_background_control_flow(self):
         tests_by_name = {test["test"]: test for test in self.tests}
