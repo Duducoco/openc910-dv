@@ -170,6 +170,46 @@ class C910TestlistTest(unittest.TestCase):
                 self.assertIn("+no_branch_jump=1", options)
                 self.assertNotIn("+no_load_store=1", options)
 
+    def test_lsu_focus_tests_have_bounded_background_control_flow(self):
+        tests_by_name = {test["test"]: test for test in self.tests}
+        for name in (
+            "c910_lsu_random_focus_test",
+            "c910_lsu_hazard_focus_test",
+            "c910_lsu_multi_page_focus_test",
+            "c910_lsu_memory_region_focus_test",
+            "c910_lsu_unaligned_focus_test",
+        ):
+            with self.subTest(test=name):
+                options = tests_by_name[name]["gen_opts"]
+
+                self.assertIn("+num_of_sub_program=0", options)
+                self.assertIn("+no_branch_jump=1", options)
+                self.assertNotIn("+no_load_store=1", options)
+
+    def test_timeout_prone_tests_have_bounded_control_flow(self):
+        tests_by_name = {test["test"]: test for test in self.tests}
+        for name in (
+            "c910_fence_test",
+            "c910_illegal_csr_exception_test",
+        ):
+            with self.subTest(test=name):
+                options = tests_by_name[name]["gen_opts"]
+
+                self.assertIn("+num_of_sub_program=0", options)
+                self.assertIn("+no_branch_jump=1", options)
+
+    def test_call_return_stress_has_bounded_background_control_flow(self):
+        tests_by_name = {test["test"]: test for test in self.tests}
+        options = tests_by_name["c910_jump_call_return_stress_test"]["gen_opts"]
+        subprogram_count = re.search(r"\+num_of_sub_program=(\d+)", options)
+
+        self.assertIsNotNone(subprogram_count)
+        self.assertGreater(int(subprogram_count.group(1)), 0)
+        self.assertLessEqual(int(subprogram_count.group(1)), 6)
+        self.assertNotIn("riscv_jal_instr", options)
+        self.assertIn("+no_branch_jump=1", options)
+        self.assertNotIn("+disable_compressed_instr=1", options)
+
     def test_branch_smoke_test_has_bounded_call_stack(self):
         tests_by_name = {test["test"]: test for test in self.tests}
         branch = tests_by_name["c910_branch_jump_test"]
