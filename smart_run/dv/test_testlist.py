@@ -160,6 +160,7 @@ class C910TestlistTest(unittest.TestCase):
             "c910_load_store_hazard_test",
             "c910_unaligned_load_store_test",
             "c910_floating_load_store_test",
+            "c910_single_load_store_test",
         ):
             with self.subTest(test=name):
                 load_store = tests_by_name[name]
@@ -169,6 +170,13 @@ class C910TestlistTest(unittest.TestCase):
                 self.assertIn("+num_of_sub_program=0", options)
                 self.assertIn("+no_branch_jump=1", options)
                 self.assertNotIn("+no_load_store=1", options)
+
+        single_load_store = tests_by_name["c910_single_load_store_test"]["gen_opts"]
+        self.assertIn("+instr_cnt=4000", single_load_store)
+        self.assertIn(
+            "+directed_instr_0=riscv_single_load_store_instr_stream,50",
+            single_load_store,
+        )
 
     def test_lsu_focus_tests_have_bounded_background_control_flow(self):
         tests_by_name = {test["test"]: test for test in self.tests}
