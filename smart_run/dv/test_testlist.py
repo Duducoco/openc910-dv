@@ -260,6 +260,21 @@ class C910TestlistTest(unittest.TestCase):
             options,
         )
 
+    def test_memory_region_locality_has_bounded_background_stimulus(self):
+        tests_by_name = {test["test"]: test for test in self.tests}
+        locality = tests_by_name["c910_memory_region_locality_test"]
+        options = locality["gen_opts"]
+
+        self.assertIn("memory_region", locality["coverage_tags"])
+        self.assertIn("+num_of_sub_program=0", options)
+        self.assertIn("+no_branch_jump=1", options)
+        self.assertIn("+no_fence=1", options)
+        self.assertNotIn("+no_load_store=1", options)
+        self.assertIn(
+            "+directed_instr_0=riscv_mem_region_stress_test,60",
+            options,
+        )
+
     def test_loop_stress_has_bounded_background_control_flow(self):
         tests_by_name = {test["test"]: test for test in self.tests}
         options = tests_by_name["c910_loop_stress_test"]["gen_opts"]
